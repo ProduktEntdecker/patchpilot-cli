@@ -132,9 +132,26 @@ async function main() {
       return;
     }
 
-    // Check each package for vulnerabilities
+    // Separate packages by ecosystem - Homebrew has no vulnerability database
+    const checkablePackages = packages.filter(p => p.ecosystem !== 'homebrew');
+    const homebrewPackages = packages.filter(p => p.ecosystem === 'homebrew');
+
+    // If only homebrew packages, return honest message about limitation
+    if (checkablePackages.length === 0 && homebrewPackages.length > 0) {
+      const pkgNames = homebrewPackages.map(p => p.name).join(', ');
+      const out = makeOutput(
+        hookEventName,
+        'allow',
+        `Homebrew packages not checked (${pkgNames}) - no vulnerability database available. Allowing by default.`
+      );
+      process.stdout.write(JSON.stringify(out) + '\n');
+      process.exit(0);
+      return;
+    }
+
+    // Check each checkable package for vulnerabilities
     const allVulnerabilities: Vulnerability[] = [];
-    for (const pkg of packages) {
+    for (const pkg of checkablePackages) {
       const osvVulns = await checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem);
 
       // Convert OSV vulnerabilities to decision engine format
@@ -148,7 +165,13 @@ async function main() {
     }
 
     // Make decision based on vulnerabilities
-    const { decision, reason } = makeDecision(allVulnerabilities);
+    let { decision, reason } = makeDecision(allVulnerabilities);
+
+    // Add note about unchecked homebrew packages if any
+    if (homebrewPackages.length > 0) {
+      const pkgNames = homebrewPackages.map(p => p.name).join(', ');
+      reason += ` Note: Homebrew packages not checked (${pkgNames}) - no vulnerability database available.`;
+    }
 
     const out = makeOutput(hookEventName, decision, reason);
     process.stdout.write(JSON.stringify(out) + '\n');
