@@ -1,6 +1,6 @@
 {
   "name": "patchpilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Security scanner for vibe coders - Claude Code hook that checks packages before installation",
   "type": "module",
   "main": "dist/index.js",

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2024-01-06
+
+### Security - Critical Fixes from Security Audit
+
+**BREAKING: Fail-closed behavior on network errors**
+- Previously: Network errors returned "no vulnerabilities" (DANGEROUS)
+- Now: Network errors deny the install with clear message
+
+**Parser bypass fixes:**
+- Full path commands now detected (`/usr/bin/npm`, `~/.nvm/.../npm`)
+- `npx -p <pkg>` and `--package=<pkg>` flags now scanned (not just the executable)
+- `npm link`, `yarn link`, `bun link` commands now detected
+- `eval "npm install ..."` with quoted strings now parsed
+- 16 additional command wrappers added (caffeinate, watch, xargs, proxychains, etc.)
+
+### Changed
+- OSV API calls now run in parallel (O(1) instead of O(n) for multiple packages)
+- Reduced per-request timeout from 8s to 4s to fit within hook budget
+- Removed `any` type usage for better type safety
+- Added `CheckResult` type to distinguish success vs error
+
+### Added
+- 20 new security tests for bypass prevention
+- Total test count: 87
+
 ## [0.2.0] - 2024-01-06
 
 ### Added

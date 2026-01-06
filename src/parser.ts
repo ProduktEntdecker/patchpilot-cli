@@ -19,9 +19,28 @@ function getOperator(token: ShellToken): string | null {
 }
 
 // P1-001: Command wrappers that should be stripped
+// Extended with bypasses found in security audit
 const COMMAND_WRAPPERS = new Set([
+  // Original
   'env', 'sudo', 'doas', 'exec', 'eval', 'command', 'builtin',
-  'nice', 'ionice', 'nohup', 'timeout', 'time', 'strace', 'ltrace'
+  'nice', 'ionice', 'nohup', 'timeout', 'time', 'strace', 'ltrace',
+  // Added from security audit - macOS/Linux utilities
+  'caffeinate',  // macOS keep-awake
+  'watch',       // repeat command
+  'xargs',       // pipe to command
+  'parallel',    // GNU parallel
+  'setsid',      // run in new session
+  'daemonize',   // daemonize process
+  'at',          // scheduled execution
+  'batch',       // batch execution
+  'trickle',     // bandwidth limiter
+  'proxychains', // proxy wrapper
+  'tsocks',      // transparent SOCKS
+  'firejail',    // sandbox
+  'sandbox-exec', // macOS sandbox
+  'script',      // typescript wrapper
+  'unbuffer',    // expect unbuffer
+  'pty-run',     // pty wrapper
 ]);
 
 // Command separating operators
@@ -62,6 +81,7 @@ function extractCommands(input: string): string[][] {
 }
 
 // P1-001: Strip command wrappers like env, sudo, exec, etc.
+// SECURITY FIX: Also handle eval "quoted command" by parsing the quoted string
 function unwrapCommand(args: string[]): string[] {
   let unwrapped = [...args];
 
@@ -71,6 +91,24 @@ function unwrapCommand(args: string[]): string[] {
     const basename = cmd.split('/').pop() || '';
 
     if (COMMAND_WRAPPERS.has(cmd) || COMMAND_WRAPPERS.has(basename)) {
+      // SECURITY FIX: Handle eval with quoted argument
+      // eval "npm install malicious" - the quoted part becomes a single token
+      if ((cmd === 'eval' || basename === 'eval') && unwrapped.length >= 2) {
+        const evalArg = unwrapped[1];
+        // If eval's argument looks like a command string, parse it
+        if (evalArg && !evalArg.startsWith('-')) {
+          // Parse the eval argument as a new command
+          const parsedEval = parse(evalArg);
+          const evalTokens = parsedEval
+            .filter((t): t is string => typeof t === 'string')
+            .filter(t => !ENV_VAR_PATTERN.test(t));
+          if (evalTokens.length > 0) {
+            unwrapped = evalTokens;
+            continue; // Re-process in case there are nested wrappers
+          }
+        }
+      }
+
       unwrapped = unwrapped.slice(1);
       // Skip flags for commands that take them (sudo -u root, timeout 60, etc.)
       while (unwrapped.length > 0 && unwrapped[0].startsWith('-')) {
@@ -86,6 +124,10 @@ function unwrapCommand(args: string[]): string[] {
       }
       // Handle timeout's duration argument (first non-flag arg)
       if (basename === 'timeout' && unwrapped.length > 0 && /^\d+/.test(unwrapped[0])) {
+        unwrapped = unwrapped.slice(1);
+      }
+      // Handle watch's interval argument
+      if (basename === 'watch' && unwrapped.length > 0 && /^\d+/.test(unwrapped[0])) {
         unwrapped = unwrapped.slice(1);
       }
     } else {
@@ -158,6 +200,11 @@ function parsePackagesFromArgs(args: string[], ecosystem: ParsedPackage['ecosyst
 
 type DetectResult = { ecosystem: ParsedPackage['ecosystem']; packageArgs: string[] };
 
+// Extract basename from potentially path-prefixed command
+function getBasename(cmd: string): string {
+  return cmd.split('/').pop() || cmd;
+}
+
 function detectInstallCommand(args: string[]): DetectResult | null {
   if (args.length < 1) return null;
 
@@ -165,7 +212,8 @@ function detectInstallCommand(args: string[]): DetectResult | null {
   const unwrapped = unwrapCommand(args);
   if (unwrapped.length < 1) return null;
 
-  const cmd = unwrapped[0];
+  // SECURITY FIX: Extract basename to handle /usr/bin/npm, ~/.nvm/.../npm, etc.
+  const cmd = getBasename(unwrapped[0]);
   const subcmd = unwrapped[1] || '';
 
   // P1-002: npm ecosystem - npm, npx, pnpm, yarn, bun
@@ -173,32 +221,78 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
   }
 
+  // SECURITY FIX: npm link installs packages globally
+  if (cmd === 'npm' && subcmd === 'link') {
+    const linkArgs = unwrapped.slice(2);
+    // npm link (no args) = link current directory, npm link <pkg> = install <pkg>
+    if (linkArgs.length > 0) {
+      return { ecosystem: 'npm', packageArgs: linkArgs };
+    }
+  }
+
   if (cmd === 'yarn' && ['add', 'install'].includes(subcmd)) {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+  }
+
+  // yarn link
+  if (cmd === 'yarn' && subcmd === 'link') {
+    const linkArgs = unwrapped.slice(2);
+    if (linkArgs.length > 0) {
+      return { ecosystem: 'npm', packageArgs: linkArgs };
+    }
   }
 
   if (cmd === 'bun' && ['add', 'install', 'i'].includes(subcmd)) {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
   }
 
+  // bun link
+  if (cmd === 'bun' && subcmd === 'link') {
+    const linkArgs = unwrapped.slice(2);
+    if (linkArgs.length > 0) {
+      return { ecosystem: 'npm', packageArgs: linkArgs };
+    }
+  }
+
   // P1-003: npx/bunx execution - npx <package> runs arbitrary code
+  // SECURITY FIX: Also capture packages from -p/--package flags
   if ((cmd === 'npx' || cmd === 'bunx') && unwrapped.length >= 2) {
-    // Find first non-flag argument (the package)
-    let pkgIndex = 1;
-    while (pkgIndex < unwrapped.length && unwrapped[pkgIndex].startsWith('-')) {
-      // Handle --yes, --no-install, -p, etc.
-      if (unwrapped[pkgIndex] === '-p' || unwrapped[pkgIndex] === '--package') {
-        pkgIndex += 2; // Skip flag and its value
+    const packagesToCheck: string[] = [];
+    let i = 1;
+
+    while (i < unwrapped.length) {
+      const arg = unwrapped[i];
+
+      if (arg === '-p' || arg === '--package') {
+        // -p <package> or --package <package>
+        if (i + 1 < unwrapped.length && !unwrapped[i + 1].startsWith('-')) {
+          const pkg = unwrapped[i + 1];
+          if (!pkg.startsWith('.') && !pkg.startsWith('/')) {
+            packagesToCheck.push(pkg);
+          }
+        }
+        i += 2;
+      } else if (arg.startsWith('--package=')) {
+        // --package=<package>
+        const pkg = arg.substring('--package='.length);
+        if (pkg && !pkg.startsWith('.') && !pkg.startsWith('/')) {
+          packagesToCheck.push(pkg);
+        }
+        i++;
+      } else if (arg.startsWith('-')) {
+        // Skip other flags
+        i++;
       } else {
-        pkgIndex++;
+        // First non-flag argument is the executable package
+        if (!arg.startsWith('.') && !arg.startsWith('/')) {
+          packagesToCheck.push(arg);
+        }
+        break; // Stop after finding executable
       }
     }
-    if (pkgIndex < unwrapped.length) {
-      const pkg = unwrapped[pkgIndex];
-      // Exclude local scripts (./something, ../something, /path/to/script)
-      if (!pkg.startsWith('.') && !pkg.startsWith('/')) {
-        return { ecosystem: 'npm', packageArgs: [pkg] };
-      }
+
+    if (packagesToCheck.length > 0) {
+      return { ecosystem: 'npm', packageArgs: packagesToCheck };
     }
   }
 
@@ -222,8 +316,9 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2) };
   }
 
-  // python -m pip install
-  if ((cmd === 'python' || cmd === 'python3') && subcmd === '-m') {
+  // python -m pip install (also handle full paths like /usr/bin/python3)
+  const pythonBasename = getBasename(unwrapped[0]);
+  if ((pythonBasename === 'python' || pythonBasename === 'python3') && subcmd === '-m') {
     if (unwrapped[2] === 'pip' && unwrapped[3] === 'install') {
       return { ecosystem: 'pypi', packageArgs: unwrapped.slice(4) };
     }

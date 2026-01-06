@@ -6,6 +6,11 @@ export type Vulnerability = {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 };
 
+// Result type that distinguishes between "no vulnerabilities" and "check failed"
+export type CheckResult =
+  | { status: 'success'; vulnerabilities: Vulnerability[] }
+  | { status: 'error'; error: string };
+
 type OSVVulnerability = {
   id: string;
   summary?: string;
@@ -64,7 +69,7 @@ function coerceSeverity(v: OSVVulnerability): Vulnerability['severity'] {
     if (best !== 'UNKNOWN') return best;
   }
 
-  const dbSev = (v as any)?.database_specific?.severity as string | undefined;
+  const dbSev = v.database_specific?.severity;
   if (typeof dbSev === 'string') {
     const upper = dbSev.toUpperCase();
     if (upper.includes('CRITICAL')) return 'CRITICAL';
@@ -82,22 +87,25 @@ function chooseId(v: OSVVulnerability): string {
   return cve ?? v.id;
 }
 
-function ecosystemSafe(e: Ecosystem): Ecosystem {
-  if (e === 'npm' || e === 'pypi' || e === 'homebrew') return e;
-  return 'npm';
+// OSV API request body type
+interface OSVQueryRequest {
+  package: { name: string; ecosystem: string };
+  version?: string;
 }
 
 export async function checkPackageVulnerabilities(
   name: string,
   version: string | undefined,
   ecosystem: Ecosystem
-): Promise<Vulnerability[]> {
-  if (!name || !name.trim()) return [];
+): Promise<CheckResult> {
+  if (!name || !name.trim()) {
+    return { status: 'success', vulnerabilities: [] };
+  }
 
-  const osvEcosystem = mapEcosystem(ecosystemSafe(ecosystem));
+  const osvEcosystem = mapEcosystem(ecosystem);
   const pkgName = name.trim();
 
-  const body: any = {
+  const body: OSVQueryRequest = {
     package: { name: pkgName, ecosystem: osvEcosystem },
   };
   if (version && version.trim()) {
@@ -105,7 +113,8 @@ export async function checkPackageVulnerabilities(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  // Reduced timeout to 4s per request (was 8s) to fit within hook budget
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
 
   try {
     const resp = await fetch('https://api.osv.dev/v1/query', {
@@ -116,20 +125,26 @@ export async function checkPackageVulnerabilities(
     });
 
     if (!resp.ok) {
-      return [];
+      // FAIL CLOSED: API error = deny, not allow
+      return { status: 'error', error: `OSV API returned ${resp.status}` };
     }
 
     const data = (await resp.json()) as { vulns?: OSVVulnerability[] };
     const vulns = Array.isArray(data?.vulns) ? data.vulns : [];
 
-    return vulns.map(v => ({
-      id: chooseId(v),
-      summary: v.summary ?? '',
-      severity: coerceSeverity(v),
-    }));
-  } catch {
-    return [];
+    return {
+      status: 'success',
+      vulnerabilities: vulns.map(v => ({
+        id: chooseId(v),
+        summary: v.summary ?? '',
+        severity: coerceSeverity(v),
+      })),
+    };
+  } catch (err) {
+    // FAIL CLOSED: Network error = deny, not allow
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { status: 'error', error: `OSV check failed: ${message}` };
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
   }
 }

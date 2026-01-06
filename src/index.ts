@@ -22,7 +22,7 @@
 
 import { makeDecision, type Vulnerability } from './decision.js';
 import { parseInstallCommand } from './parser.js';
-import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability } from './osv.js';
+import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability, type CheckResult } from './osv.js';
 
 // Map OSV severity to decision engine severity
 function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['severity'] {
@@ -111,8 +111,8 @@ async function main() {
     const command =
       input.tool_input &&
       typeof input.tool_input === 'object' &&
-      typeof (input.tool_input as any).command === 'string'
-        ? (input.tool_input as any).command
+      typeof input.tool_input.command === 'string'
+        ? input.tool_input.command
         : undefined;
 
     // Skip non-Bash commands
@@ -149,19 +149,43 @@ async function main() {
       return;
     }
 
-    // Check each checkable package for vulnerabilities
-    const allVulnerabilities: Vulnerability[] = [];
-    for (const pkg of checkablePackages) {
-      const osvVulns = await checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem);
+    // PARALLEL: Check all packages for vulnerabilities concurrently
+    const checkResults = await Promise.all(
+      checkablePackages.map(pkg =>
+        checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem)
+          .then(result => ({ pkg, result }))
+      )
+    );
 
-      // Convert OSV vulnerabilities to decision engine format
-      for (const v of osvVulns) {
-        allVulnerabilities.push({
-          name: pkg.name,
-          version: pkg.version || 'latest',
-          severity: mapSeverity(v.severity),
-        });
+    // FAIL CLOSED: If any check failed, deny the install
+    const errors: string[] = [];
+    const allVulnerabilities: Vulnerability[] = [];
+
+    for (const { pkg, result } of checkResults) {
+      if (result.status === 'error') {
+        errors.push(`${pkg.name}: ${result.error}`);
+      } else {
+        // Convert OSV vulnerabilities to decision engine format
+        for (const v of result.vulnerabilities) {
+          allVulnerabilities.push({
+            name: pkg.name,
+            version: pkg.version || 'latest',
+            severity: mapSeverity(v.severity),
+          });
+        }
       }
+    }
+
+    // If any vulnerability checks failed, deny with explanation
+    if (errors.length > 0) {
+      const out = makeOutput(
+        hookEventName,
+        'deny',
+        `Security check failed (denying by default): ${errors.join('; ')}`
+      );
+      process.stdout.write(JSON.stringify(out) + '\n');
+      process.exit(2);
+      return;
     }
 
     // Make decision based on vulnerabilities

@@ -446,4 +446,138 @@ describe('parseInstallCommand', () => {
       ]);
     });
   });
+
+  // Security audit fixes - P0 bypasses
+  describe('security audit fixes - full path bypass', () => {
+    it('catches /usr/local/bin/npm install', () => {
+      expect(parseInstallCommand('/usr/local/bin/npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches /opt/homebrew/bin/npm install', () => {
+      expect(parseInstallCommand('/opt/homebrew/bin/npm install backdoor')).toEqual([
+        { name: 'backdoor', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches ~/.nvm path npm install', () => {
+      expect(parseInstallCommand('/Users/user/.nvm/versions/node/v20/bin/npm install evil')).toEqual([
+        { name: 'evil', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches /usr/bin/pip3 install', () => {
+      expect(parseInstallCommand('/usr/bin/pip3 install malware')).toEqual([
+        { name: 'malware', ecosystem: 'pypi' }
+      ]);
+    });
+
+    it('catches /usr/bin/python3 -m pip install', () => {
+      expect(parseInstallCommand('/usr/bin/python3 -m pip install evil')).toEqual([
+        { name: 'evil', ecosystem: 'pypi' }
+      ]);
+    });
+  });
+
+  describe('security audit fixes - npx -p/--package flag', () => {
+    it('catches npx -p malicious-pkg cowsay', () => {
+      expect(parseInstallCommand('npx -p malicious-pkg cowsay hello')).toEqual([
+        { name: 'malicious-pkg', ecosystem: 'npm' },
+        { name: 'cowsay', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches npx --package=evil-pkg tool', () => {
+      expect(parseInstallCommand('npx --package=evil-pkg some-tool')).toEqual([
+        { name: 'evil-pkg', ecosystem: 'npm' },
+        { name: 'some-tool', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches npx --package evil-pkg tool', () => {
+      expect(parseInstallCommand('npx --package evil-pkg some-tool')).toEqual([
+        { name: 'evil-pkg', ecosystem: 'npm' },
+        { name: 'some-tool', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches multiple -p packages', () => {
+      expect(parseInstallCommand('npx -p pkg1 -p pkg2 tool')).toEqual([
+        { name: 'pkg1', ecosystem: 'npm' },
+        { name: 'pkg2', ecosystem: 'npm' },
+        { name: 'tool', ecosystem: 'npm' }
+      ]);
+    });
+  });
+
+  describe('security audit fixes - npm link', () => {
+    it('catches npm link malicious-pkg', () => {
+      expect(parseInstallCommand('npm link malicious-pkg')).toEqual([
+        { name: 'malicious-pkg', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches yarn link malicious-pkg', () => {
+      expect(parseInstallCommand('yarn link malicious-pkg')).toEqual([
+        { name: 'malicious-pkg', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches bun link malicious-pkg', () => {
+      expect(parseInstallCommand('bun link malicious-pkg')).toEqual([
+        { name: 'malicious-pkg', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('ignores npm link with no package (local link)', () => {
+      expect(parseInstallCommand('npm link')).toBeNull();
+    });
+  });
+
+  describe('security audit fixes - eval with quotes', () => {
+    it('catches eval "npm install malicious"', () => {
+      expect(parseInstallCommand('eval "npm install malicious"')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches eval "pip install backdoor"', () => {
+      expect(parseInstallCommand('eval "pip install backdoor"')).toEqual([
+        { name: 'backdoor', ecosystem: 'pypi' }
+      ]);
+    });
+  });
+
+  describe('security audit fixes - additional wrappers', () => {
+    it('catches caffeinate npm install', () => {
+      expect(parseInstallCommand('caffeinate npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches watch npm install', () => {
+      expect(parseInstallCommand('watch npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches xargs npm install', () => {
+      expect(parseInstallCommand('xargs npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches firejail npm install', () => {
+      expect(parseInstallCommand('firejail npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('catches proxychains npm install', () => {
+      expect(parseInstallCommand('proxychains npm install malicious')).toEqual([
+        { name: 'malicious', ecosystem: 'npm' }
+      ]);
+    });
+  });
 });
