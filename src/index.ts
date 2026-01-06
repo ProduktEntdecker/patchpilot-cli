@@ -20,7 +20,7 @@
  * }
  */
 
-// Issue #1: CLI scaffold
+import { makeDecision } from './decision.js';
 
 type HookInput = {
   hook_event_name?: string;
@@ -101,10 +101,9 @@ async function main() {
         ? (input.tool_input as any).command
         : undefined;
 
-    // Allow all commands for now (Issue #1).
-    const decision: 'allow' = 'allow';
-    const reason =
-      toolName && command ? `Allowing ${toolName} command: ${command}` : 'Allowing command';
+    // Replace the placeholder "allow all" logic with a call to the decision engine.
+    // For now, we pass an empty array of vulnerabilities.
+    const { decision, reason } = makeDecision([]);
 
     const out = makeOutput(hookEventName, decision, reason);
     process.stdout.write(JSON.stringify(out) + '\n');
