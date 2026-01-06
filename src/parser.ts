@@ -1,3 +1,4 @@
+import { parse } from 'shell-quote';
 
 export interface ParsedPackage {
   name: string;
@@ -5,63 +6,116 @@ export interface ParsedPackage {
   ecosystem: 'npm' | 'pypi' | 'homebrew';
 }
 
-export function parseInstallCommand(command: string): ParsedPackage[] | null {
-  const trimmedCommand = command.trim();
+type ParsedToken = string | { op: string } | { comment: string } | { pattern: string };
 
-  const npmRegex = /^(npm|npx)\s+(install|i|add)\s+/;
-  const pipRegex = /^pip(3)?\s+install\s+/;
-  const brewRegex = /^brew\s+install\s+/;
+function isOperator(token: ParsedToken): token is { op: string } {
+  return typeof token === 'object' && 'op' in token;
+}
 
-  let ecosystem: ParsedPackage['ecosystem'] | null = null;
-  let commandless: string = '';
+function extractCommands(input: string): string[][] {
+  const tokens = parse(input);
+  const commands: string[][] = [];
+  let current: string[] = [];
 
-  if (npmRegex.test(trimmedCommand)) {
-    ecosystem = 'npm';
-    commandless = trimmedCommand.replace(npmRegex, '');
-  } else if (pipRegex.test(trimmedCommand)) {
-    ecosystem = 'pypi';
-    commandless = trimmedCommand.replace(pipRegex, '');
-  } else if (brewRegex.test(trimmedCommand)) {
-    ecosystem = 'homebrew';
-    commandless = trimmedCommand.replace(brewRegex, '');
-  } else {
-    return null;
+  for (const token of tokens) {
+    if (isOperator(token)) {
+      if (['&&', '||', ';', '|'].includes(token.op) && current.length > 0) {
+        commands.push(current);
+        current = [];
+      }
+    } else if (typeof token === 'string') {
+      // Skip environment variable assignments (KEY=value before command)
+      if (current.length === 0 && token.includes('=') && !token.startsWith('-')) {
+        continue;
+      }
+      current.push(token);
+    }
   }
 
-  const parts = commandless.split(/\s+/).filter(p => p && !p.startsWith('-'));
-
-  if (parts.length === 0) {
-    return null;
+  if (current.length > 0) {
+    commands.push(current);
   }
 
+  return commands;
+}
+
+function parseNestedCommand(args: string[]): string[][] {
+  // Handle: bash -c "npm install pkg", sh -c "pip install pkg"
+  const shellBinaries = ['bash', 'sh', 'zsh', '/bin/bash', '/bin/sh', '/bin/zsh'];
+  if (args.length >= 3 && shellBinaries.includes(args[0]) && args[1] === '-c') {
+    return extractCommands(args.slice(2).join(' '));
+  }
+  return [args];
+}
+
+function parsePackagesFromArgs(args: string[], ecosystem: ParsedPackage['ecosystem']): ParsedPackage[] {
   const packages: ParsedPackage[] = [];
 
-  for (const part of parts) {
+  for (const arg of args) {
+    if (arg.startsWith('-')) continue; // Skip flags
+
     if (ecosystem === 'npm' || ecosystem === 'homebrew') {
-      const lastAt = part.lastIndexOf('@');
+      const lastAt = arg.lastIndexOf('@');
       if (lastAt > 0) {
-        const name = part.substring(0, lastAt);
-        const version = part.substring(lastAt + 1);
-        if (name) {
-            packages.push({ name, version, ecosystem });
-        }
+        packages.push({ name: arg.substring(0, lastAt), version: arg.substring(lastAt + 1), ecosystem });
       } else {
-        packages.push({ name: part, ecosystem });
+        packages.push({ name: arg, ecosystem });
       }
     } else if (ecosystem === 'pypi') {
-      const sep = '==';
-      const index = part.indexOf(sep);
-      if (index > 0) {
-        packages.push({
-          name: part.substring(0, index),
-          version: part.substring(index + sep.length),
-          ecosystem,
-        });
+      const idx = arg.indexOf('==');
+      if (idx > 0) {
+        packages.push({ name: arg.substring(0, idx), version: arg.substring(idx + 2), ecosystem });
       } else {
-        packages.push({ name: part, ecosystem });
+        packages.push({ name: arg, ecosystem });
       }
     }
   }
 
-  return packages.length > 0 ? packages : null;
+  return packages;
+}
+
+function detectInstallCommand(args: string[]): { ecosystem: ParsedPackage['ecosystem']; packageArgs: string[] } | null {
+  if (args.length < 2) return null;
+
+  const cmd = args[0];
+  const subcmd = args[1];
+
+  // npm install, npm i, npm add, npx install
+  if ((cmd === 'npm' || cmd === 'npx') && ['install', 'i', 'add'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: args.slice(2) };
+  }
+
+  // pip install, pip3 install
+  if ((cmd === 'pip' || cmd === 'pip3') && subcmd === 'install') {
+    return { ecosystem: 'pypi', packageArgs: args.slice(2) };
+  }
+
+  // brew install
+  if (cmd === 'brew' && subcmd === 'install') {
+    return { ecosystem: 'homebrew', packageArgs: args.slice(2) };
+  }
+
+  return null;
+}
+
+export function parseInstallCommand(command: string): ParsedPackage[] | null {
+  const allPackages: ParsedPackage[] = [];
+
+  // Extract all commands from the input (handles &&, ||, ;, |)
+  const commands = extractCommands(command);
+
+  for (const args of commands) {
+    // Check for nested shell commands
+    const nestedCommands = parseNestedCommand(args);
+
+    for (const nested of nestedCommands) {
+      const install = detectInstallCommand(nested);
+      if (install) {
+        const packages = parsePackagesFromArgs(install.packageArgs, install.ecosystem);
+        allPackages.push(...packages);
+      }
+    }
+  }
+
+  return allPackages.length > 0 ? allPackages : null;
 }
