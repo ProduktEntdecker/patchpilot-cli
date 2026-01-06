@@ -11,7 +11,8 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest"
+    "test": "vitest",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "claude-code",
@@ -21,10 +22,32 @@
     "brew",
     "vulnerabilities",
     "osv",
-    "hook"
+    "hook",
+    "supply-chain",
+    "scanner",
+    "pre-execution"
   ],
-  "author": "",
+  "author": "Florian Steiner",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ProduktEntdecker/patchpilot-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ProduktEntdecker/patchpilot-cli/issues"
+  },
+  "homepage": "https://github.com/ProduktEntdecker/patchpilot-cli#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/*.js",
+    "dist/*.d.ts",
+    "!dist/*.test.js",
+    "!dist/*.test.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "shell-quote": "^1.8.3",
     "zod": "^3.25.0"
