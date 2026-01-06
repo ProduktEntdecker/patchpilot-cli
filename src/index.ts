@@ -20,7 +20,21 @@
  * }
  */
 
-import { makeDecision } from './decision.js';
+import { makeDecision, type Vulnerability } from './decision.js';
+import { parseInstallCommand } from './parser.js';
+import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability } from './osv.js';
+
+// Map OSV severity to decision engine severity
+function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['severity'] {
+  switch (osvSeverity) {
+    case 'CRITICAL': return 'CRITICAL';
+    case 'HIGH': return 'HIGH';
+    case 'MEDIUM': return 'MODERATE';
+    case 'LOW': return 'LOW';
+    case 'UNKNOWN': return 'NONE';
+    default: return 'NONE';
+  }
+}
 
 type HookInput = {
   hook_event_name?: string;
@@ -101,13 +115,44 @@ async function main() {
         ? (input.tool_input as any).command
         : undefined;
 
-    // Replace the placeholder "allow all" logic with a call to the decision engine.
-    // For now, we pass an empty array of vulnerabilities.
-    const { decision, reason } = makeDecision([]);
+    // Skip non-Bash commands
+    if (toolName !== 'Bash' || !command) {
+      const out = makeOutput(hookEventName, 'allow', 'Not a Bash command, allowing');
+      process.stdout.write(JSON.stringify(out) + '\n');
+      process.exit(0);
+      return;
+    }
+
+    // Parse install command
+    const packages = parseInstallCommand(command);
+    if (!packages || packages.length === 0) {
+      const out = makeOutput(hookEventName, 'allow', 'Not an install command, allowing');
+      process.stdout.write(JSON.stringify(out) + '\n');
+      process.exit(0);
+      return;
+    }
+
+    // Check each package for vulnerabilities
+    const allVulnerabilities: Vulnerability[] = [];
+    for (const pkg of packages) {
+      const osvVulns = await checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem);
+
+      // Convert OSV vulnerabilities to decision engine format
+      for (const v of osvVulns) {
+        allVulnerabilities.push({
+          name: pkg.name,
+          version: pkg.version || 'latest',
+          severity: mapSeverity(v.severity),
+        });
+      }
+    }
+
+    // Make decision based on vulnerabilities
+    const { decision, reason } = makeDecision(allVulnerabilities);
 
     const out = makeOutput(hookEventName, decision, reason);
     process.stdout.write(JSON.stringify(out) + '\n');
-    process.exit(0);
+    process.exit(decision === 'deny' ? 2 : 0);
   } catch {
     const out = makeOutput('PreToolUse', 'deny', 'Unhandled error running hook');
     try {
