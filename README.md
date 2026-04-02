@@ -5,23 +5,36 @@
 [![license](https://img.shields.io/npm/l/patchpilot)](https://github.com/ProduktEntdecker/patchpilot-cli/blob/main/LICENSE)
 [![Node.js](https://img.shields.io/node/v/patchpilot)](https://nodejs.org)
 
-Security scanner for vibe coders. Automatically checks npm, pip, and brew packages for vulnerabilities before Claude Code installs them.
+Security scanner for vibe coders. Automatically checks npm, pip, and brew packages for vulnerabilities **and** supply chain risks before Claude Code installs them.
 
 ## How It Works
 
-PatchPilot is a Claude Code **pre-execution hook** that intercepts install commands:
+PatchPilot is a Claude Code **pre-execution hook** that intercepts install commands and runs two checks in parallel:
 
 ```
 You: "install lodash for me"
          ↓
 Claude: "npm install lodash@4.17.0"
          ↓
-PatchPilot: Checks OSV database
+PatchPilot: ┌─ OSV database (known CVEs)
+            └─ Registry metadata (supply chain signals)
          ↓
 BLOCKED: 4 vulnerabilities found (1 critical, 3 high)
 ```
 
-Uses the [OSV (Open Source Vulnerabilities)](https://osv.dev/) database - the same data source as `npm audit`.
+### Supply Chain Protection
+
+After the [Axios supply chain attack](https://www.every.to/p/et-tu-agent-did-you-install-the-backdoor) (March 2026), where a hijacked maintainer account injected a brand-new malicious dependency, PatchPilot now detects:
+
+| Check | What it catches | Threshold |
+|-------|----------------|-----------|
+| **Version Quarantine** | Recently published versions — suggests previous stable release | < 72 hours old |
+| **New Package Detection** | Brand-new packages with no history | < 7 days old |
+| **Low Downloads** | Packages with no community adoption (npm only) | < 100/week |
+
+All three would have caught `plain-crypto-js`, the malicious package used in the Axios attack.
+
+Supply chain checks return `ask` (not `deny`) — you decide whether to proceed. CVE-based blocks remain automatic.
 
 ## Installation
 
@@ -103,17 +116,21 @@ NODE_ENV=production npm install evil-pkg
 
 ## Decision Logic
 
-| Severity | Action |
-|----------|--------|
-| CRITICAL or HIGH | **Block** - requires manual approval |
-| MODERATE or LOW | **Allow** - with warning message |
-| None found | **Allow** |
+| Source | Severity | Action |
+|--------|----------|--------|
+| **CVE** | CRITICAL or HIGH | **Block** — requires manual approval |
+| **CVE** | MODERATE or LOW | **Allow** — with warning |
+| **Supply Chain** | Version < 72h / New package / Low downloads | **Ask** — you decide |
+| None found | — | **Allow** |
+
+Supply chain checks run in parallel with CVE checks (zero additional latency) and fail-open — if the registry is unreachable, installs proceed normally.
 
 ## Limitations
 
 - **Homebrew**: OSV has no vulnerability database for Homebrew packages. Brew commands are detected but not checked.
 - **Private registries**: Only public npm and PyPI packages are checked.
-- **Offline**: Requires internet connection to query OSV API.
+- **Offline**: Requires internet connection to query OSV API and package registries.
+- **Zero-day CVEs**: Supply chain heuristics catch suspicious metadata patterns, but cannot detect all novel attack vectors.
 
 ## Development
 
