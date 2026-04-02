@@ -20,9 +20,10 @@
  * }
  */
 
-import { makeDecision, type Vulnerability } from './decision.js';
+import { makeDecision, makeFullDecision, type Vulnerability } from './decision.js';
 import { parseInstallCommand } from './parser.js';
 import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability, type CheckResult } from './osv.js';
+import { checkRegistryMetadata, type SupplyChainSignal } from './registry.js';
 
 // Map OSV severity to decision engine severity
 function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['severity'] {
@@ -149,15 +150,25 @@ async function main() {
       return;
     }
 
-    // PARALLEL: Check all packages for vulnerabilities concurrently
-    const checkResults = await Promise.all(
-      checkablePackages.map(pkg =>
-        checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem)
-          .then(result => ({ pkg, result }))
-      )
-    );
+    // PARALLEL: Run OSV and registry checks concurrently
+    const [checkResults, registryResults] = await Promise.all([
+      // OSV vulnerability checks (fail-closed)
+      Promise.all(
+        checkablePackages.map(pkg =>
+          checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem)
+            .then(result => ({ pkg, result }))
+        )
+      ),
+      // Registry metadata checks (fail-open)
+      Promise.all(
+        checkablePackages.map(pkg =>
+          checkRegistryMetadata(pkg.name, pkg.version, pkg.ecosystem)
+            .then(result => ({ pkg, result }))
+        )
+      ),
+    ]);
 
-    // FAIL CLOSED: If any check failed, deny the install
+    // FAIL CLOSED: If any OSV check failed, deny the install
     const errors: string[] = [];
     const allVulnerabilities: Vulnerability[] = [];
 
@@ -188,8 +199,16 @@ async function main() {
       return;
     }
 
-    // Make decision based on vulnerabilities
-    let { decision, reason } = makeDecision(allVulnerabilities);
+    // Collect supply chain signals (fail-open: errors silently ignored)
+    const allSignals: SupplyChainSignal[] = [];
+    for (const { result } of registryResults) {
+      if (result.status === 'success') {
+        allSignals.push(...result.signals);
+      }
+    }
+
+    // Make decision based on CVE vulnerabilities + supply chain signals
+    let { decision, reason } = makeFullDecision(allVulnerabilities, allSignals);
 
     // Add note about unchecked homebrew packages if any
     if (homebrewPackages.length > 0) {
