@@ -11,7 +11,7 @@ Security scanner for vibe coders. Automatically checks npm, pip, and brew packag
 
 PatchPilot is a Claude Code **pre-execution hook** that intercepts install commands and runs two checks in parallel:
 
-```
+```text
 You: "install lodash for me"
          ↓
 Claude: "npm install lodash@4.17.0"
@@ -119,7 +119,8 @@ NODE_ENV=production npm install evil-pkg
 | Source | Severity | Action |
 |--------|----------|--------|
 | **CVE** | CRITICAL or HIGH | **Block** — requires manual approval |
-| **CVE** | MODERATE or LOW | **Allow** — with warning |
+| **CVE** | MODERATE | **Ask** — you decide |
+| **CVE** | LOW | **Allow** — with warning |
 | **Supply Chain** | Version < 72h / New package / Low downloads | **Ask** — you decide |
 | None found | — | **Allow** |
 
