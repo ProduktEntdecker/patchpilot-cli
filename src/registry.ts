@@ -35,7 +35,8 @@ function formatAge(hours: number): string {
   return `${days} days ago`;
 }
 
-const PRE_RELEASE_PATTERN = /-(alpha|beta|rc|canary|dev|preview|next|experimental)/i;
+// Matches npm-style (-alpha, -beta) and PEP 440-style (1.0a1, 1.0b2, 1.0rc1, 1.0.dev1)
+const PRE_RELEASE_PATTERN = /-(alpha|beta|rc|canary|dev|preview|next|experimental)|[\d](a|b|rc)\d|\.dev\d|\.post\d/i;
 
 function findPreviousStableVersion(
   timeMap: Record<string, string>,
@@ -97,8 +98,8 @@ async function checkNpm(
 ): Promise<RegistryResult> {
   const encodedName = name.startsWith('@') ? name.replace('/', '%2F') : name;
 
-  // Fetch registry metadata and downloads in parallel
-  const [registryResp, downloadsResp] = await Promise.all([
+  // Fetch registry metadata and downloads in parallel; downloads failure shouldn't lose registry signals
+  const [registryResult, downloadsResult] = await Promise.allSettled([
     fetchWithTimeout(`https://registry.npmjs.org/${encodedName}`, REGISTRY_TIMEOUT_MS),
     fetchWithTimeout(
       `https://api.npmjs.org/downloads/point/last-week/${encodedName}`,
@@ -106,7 +107,11 @@ async function checkNpm(
     ),
   ]);
 
-  if (!registryResp.ok) return { status: 'success', signals: [] };
+  if (registryResult.status === 'rejected' || !registryResult.value.ok) {
+    return { status: 'success', signals: [] };
+  }
+  const registryResp = registryResult.value;
+  const downloadsResp = downloadsResult.status === 'fulfilled' ? downloadsResult.value : null;
 
   const data = (await registryResp.json()) as NpmRegistryResponse;
   const timeMap = data.time ?? {};
@@ -148,7 +153,7 @@ async function checkNpm(
   }
 
   // H3: Low Download Count
-  if (downloadsResp.ok) {
+  if (downloadsResp?.ok) {
     const dlData = (await downloadsResp.json()) as NpmDownloadsResponse;
     const downloads = dlData.downloads ?? 0;
     if (downloads < LOW_DOWNLOAD_THRESHOLD) {
