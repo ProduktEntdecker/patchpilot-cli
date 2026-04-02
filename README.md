@@ -24,7 +24,7 @@ BLOCKED: 4 vulnerabilities found (1 critical, 3 high)
 
 ### Supply Chain Protection
 
-After the [Axios supply chain attack](https://www.every.to/p/et-tu-agent-did-you-install-the-backdoor) (March 2026), where a hijacked maintainer account injected a brand-new malicious dependency, PatchPilot now detects:
+After the [Axios supply chain attack](https://www.www.a16z.news/p/et-tu-agent-did-you-install-the-backdoor) (March 2026), where a hijacked maintainer account injected a brand-new malicious dependency, PatchPilot now detects:
 
 | Check | What it catches | Threshold |
 |-------|----------------|-----------|
