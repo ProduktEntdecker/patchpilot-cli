@@ -1,3 +1,4 @@
+import type { SupplyChainSignal } from './registry.js';
 
 export interface Vulnerability {
   name: string;
@@ -53,4 +54,46 @@ export function makeDecision(vulnerabilities: Vulnerability[]): DecisionResult {
   }
 
   return { decision, reason };
+}
+
+export function makeFullDecision(
+  vulnerabilities: Vulnerability[],
+  signals: SupplyChainSignal[]
+): DecisionResult {
+  // CVE-based decision first (always takes priority)
+  const cveResult = makeDecision(vulnerabilities);
+
+  // If CVE already denies, keep it — supply chain signals don't override
+  if (cveResult.decision === 'deny') {
+    // Append supply chain context if present
+    if (signals.length > 0) {
+      const scWarnings = signals.map(s => s.detail).join(' ');
+      return { decision: 'deny', reason: `${cveResult.reason} Additionally: ${scWarnings}` };
+    }
+    return cveResult;
+  }
+
+  // Build supply chain reason parts
+  if (signals.length === 0) {
+    return cveResult;
+  }
+
+  const parts: string[] = [];
+  for (const signal of signals) {
+    let line = `⚠️ ${signal.detail}`;
+    if (signal.suggestion) {
+      line += ` ${signal.suggestion}`;
+    }
+    parts.push(line);
+  }
+
+  const scReason = parts.join(' ');
+
+  // Escalate allow → ask if any supply chain signal fires
+  if (cveResult.decision === 'allow') {
+    return { decision: 'ask', reason: scReason };
+  }
+
+  // CVE was already 'ask' — combine reasons
+  return { decision: 'ask', reason: `${cveResult.reason} ${scReason}` };
 }
