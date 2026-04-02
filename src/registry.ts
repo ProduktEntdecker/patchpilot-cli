@@ -201,22 +201,32 @@ async function checkPyPI(
   }
 
   // H1: Version Quarantine
-  const resolvedVersion = version ?? Object.keys(releases).pop();
+  // PyPI does not guarantee release order — find latest by upload timestamp
+  const resolvedVersion = version ?? (() => {
+    let latestVersion: string | undefined;
+    let latestTime = '';
+    for (const [v, files] of Object.entries(releases)) {
+      const uploadTime = files?.[0]?.upload_time_iso_8601;
+      if (uploadTime && uploadTime > latestTime) {
+        latestTime = uploadTime;
+        latestVersion = v;
+      }
+    }
+    return latestVersion;
+  })();
   if (resolvedVersion && releases[resolvedVersion]?.[0]?.upload_time_iso_8601) {
     const versionAge = hoursAgo(releases[resolvedVersion][0].upload_time_iso_8601);
     if (versionAge < VERSION_QUARANTINE_HOURS) {
-      // Find previous stable version
-      const versionKeys = Object.keys(releases);
-      const currentIdx = versionKeys.indexOf(resolvedVersion);
+      // Find previous stable version by timestamp (PyPI order not guaranteed)
       let previousStableVersion: string | undefined;
-
-      for (let i = currentIdx - 1; i >= 0; i--) {
-        const v = versionKeys[i];
+      let bestPreviousTime = '';
+      for (const [v, files] of Object.entries(releases)) {
+        if (v === resolvedVersion) continue;
         if (PRE_RELEASE_PATTERN.test(v)) continue;
-        const files = releases[v];
-        if (files?.[0]?.upload_time_iso_8601 && hoursAgo(files[0].upload_time_iso_8601) >= VERSION_QUARANTINE_HOURS) {
+        const uploadTime = files?.[0]?.upload_time_iso_8601;
+        if (uploadTime && hoursAgo(uploadTime) >= VERSION_QUARANTINE_HOURS && uploadTime > bestPreviousTime) {
+          bestPreviousTime = uploadTime;
           previousStableVersion = v;
-          break;
         }
       }
 
