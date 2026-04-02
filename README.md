@@ -124,7 +124,7 @@ NODE_ENV=production npm install evil-pkg
 | **Supply Chain** | Version < 72h / New package / Low downloads | **Ask** — you decide |
 | None found | — | **Allow** |
 
-Supply chain checks run in parallel with CVE checks (zero additional latency) and fail-open — if the registry is unreachable, installs proceed normally.
+Supply chain checks run in parallel with CVE checks (low added latency) and fail-open — if the registry is unreachable, installs proceed normally.
 
 ## Limitations
 
