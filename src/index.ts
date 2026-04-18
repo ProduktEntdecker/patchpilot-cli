@@ -177,10 +177,13 @@ async function main() {
         errors.push(`${pkg.name}: ${result.error}`);
       } else {
         // Convert OSV vulnerabilities to decision engine format
+        // Use resolvedVersion (from registry lookup) when no version was specified,
+        // so messages show the real version instead of misleading "latest".
+        const displayVersion = pkg.version || result.resolvedVersion || 'latest';
         for (const v of result.vulnerabilities) {
           allVulnerabilities.push({
             name: pkg.name,
-            version: pkg.version || 'latest',
+            version: displayVersion,
             severity: mapSeverity(v.severity),
           });
         }
