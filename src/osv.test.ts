@@ -1,11 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { checkPackageVulnerabilities } from './osv.js';
 
 const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
 
 beforeEach(() => {
   mockFetch.mockReset();
+  vi.stubGlobal('fetch', mockFetch);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 function osvResponse(vulns: Array<{ id: string; severity?: string }> = []) {
