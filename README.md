@@ -109,11 +109,22 @@ NODE_ENV=production npm install evil-pkg
 | MODERATE or LOW | **Allow** - with warning message |
 | None found | **Allow** |
 
+## Accuracy
+
+When you reference a package without a version (e.g. `npx vite`, `npm install lodash`),
+PatchPilot resolves the current `latest` from the npm or PyPI registry before querying
+OSV. This avoids surfacing patched CVEs from older versions as if they affected the
+release you're about to install.
+
+If the registry lookup fails (timeout, 404, network error), PatchPilot falls back to
+querying OSV without a version — preserving fail-closed behavior for unknown packages.
+
 ## Limitations
 
 - **Homebrew**: OSV has no vulnerability database for Homebrew packages. Brew commands are detected but not checked.
 - **Private registries**: Only public npm and PyPI packages are checked.
 - **Offline**: Requires internet connection to query OSV API.
+- **Local `npx <tool>`**: PatchPilot treats `npx <tool>` as a potential install. If the tool is already installed in `./node_modules/.bin/`, npx runs the local copy and nothing is downloaded — but the OSV check still runs against the latest published version.
 
 ## Development
 
