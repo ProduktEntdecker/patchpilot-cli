@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-19
+
+### Fixed
+
+**False positives on `npx <tool>` and other unversioned package references**
+
+When a package was referenced without a version (e.g. `npx vite`,
+`npx playwright install chromium`), PatchPilot queried OSV without a
+version field. OSV returns vulnerabilities across **all versions ever
+published** in that case, surfacing patched CVEs as active threats.
+
+Real-world impact before the fix:
+- `vite@latest` reported with 5 HIGH vulnerabilities — `vite@8.0.8` (current latest) has 0
+- `playwright@latest` reported with 1 HIGH — `playwright@1.59.1` has 0
+
+Fix: when no version is specified, resolve `latest` from the npm or PyPI
+registry first, then query OSV with that concrete version. On registry
+failure (404, timeout, network error), falls back to the previous
+unversioned query — preserves fail-closed behavior for unknown packages.
+
+The resolved version now appears in the hook output (`vite@8.0.8` instead
+of misleading `vite@latest`).
+
+Closes #19, #21.
+
 ## [0.3.0] - 2024-01-06
 
 ### Security - Critical Fixes from Security Audit
