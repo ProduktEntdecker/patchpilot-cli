@@ -8,7 +8,7 @@ export type Vulnerability = {
 
 // Result type that distinguishes between "no vulnerabilities" and "check failed"
 export type CheckResult =
-  | { status: 'success'; vulnerabilities: Vulnerability[] }
+  | { status: 'success'; vulnerabilities: Vulnerability[]; resolvedVersion?: string }
   | { status: 'error'; error: string };
 
 type OSVVulnerability = {
@@ -93,6 +93,41 @@ interface OSVQueryRequest {
   version?: string;
 }
 
+// Short timeout for latest-version resolution; falls back gracefully on failure.
+const LATEST_RESOLVE_TIMEOUT_MS = 2000;
+
+// Resolve the actual version string when none was specified by the user.
+// Without this, OSV returns vulnerabilities across ALL versions ever published,
+// flagging packages whose current release is patched (false positive).
+async function resolveLatestVersion(
+  name: string,
+  ecosystem: Ecosystem
+): Promise<string | undefined> {
+  let url: string;
+  if (ecosystem === 'npm') {
+    // /latest endpoint returns just the latest manifest (smaller than full registry doc)
+    const encoded = name.startsWith('@') ? name.replace('/', '%2F') : encodeURIComponent(name);
+    url = `https://registry.npmjs.org/${encoded}/latest`;
+  } else if (ecosystem === 'pypi') {
+    url = `https://pypi.org/pypi/${encodeURIComponent(name)}/json`;
+  } else {
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LATEST_RESOLVE_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) return undefined;
+    const data = (await resp.json()) as { version?: string; info?: { version?: string } };
+    return ecosystem === 'pypi' ? data.info?.version : data.version;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function checkPackageVulnerabilities(
   name: string,
   version: string | undefined,
@@ -105,11 +140,19 @@ export async function checkPackageVulnerabilities(
   const osvEcosystem = mapEcosystem(ecosystem);
   const pkgName = name.trim();
 
+  // If no version was specified, resolve current latest from the registry.
+  // Falls back to unversioned OSV query on resolve failure (preserves prior behavior).
+  let resolvedVersion: string | undefined;
+  if (!version || !version.trim()) {
+    resolvedVersion = await resolveLatestVersion(pkgName, ecosystem);
+  }
+  const effectiveVersion = (version && version.trim()) || resolvedVersion;
+
   const body: OSVQueryRequest = {
     package: { name: pkgName, ecosystem: osvEcosystem },
   };
-  if (version && version.trim()) {
-    body.version = version.trim();
+  if (effectiveVersion) {
+    body.version = effectiveVersion;
   }
 
   const controller = new AbortController();
@@ -139,6 +182,7 @@ export async function checkPackageVulnerabilities(
         summary: v.summary ?? '',
         severity: coerceSeverity(v),
       })),
+      resolvedVersion,
     };
   } catch (err) {
     // FAIL CLOSED: Network error = deny, not allow
