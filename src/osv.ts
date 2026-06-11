@@ -50,7 +50,19 @@ function labelFromCvssScore(scoreNum: number): Vulnerability['severity'] {
   return 'UNKNOWN';
 }
 
+// OpenSSF malicious-package advisories (MAL-*) identify known malware but
+// usually carry no CVSS score. Check the original id and aliases, not the
+// CVE-preferring chooseId() result.
+function isMalwareAdvisory(v: OSVVulnerability): boolean {
+  if (typeof v.id === 'string' && v.id.startsWith('MAL-')) return true;
+  const aliases = Array.isArray(v.aliases) ? v.aliases : [];
+  return aliases.some(a => typeof a === 'string' && a.startsWith('MAL-'));
+}
+
 function coerceSeverity(v: OSVVulnerability): Vulnerability['severity'] {
+  // Known malware is always critical, regardless of missing severity data.
+  if (isMalwareAdvisory(v)) return 'CRITICAL';
+
   if (Array.isArray(v.severity) && v.severity.length > 0) {
     let best: Vulnerability['severity'] = 'UNKNOWN';
     const order: Record<Vulnerability['severity'], number> = {

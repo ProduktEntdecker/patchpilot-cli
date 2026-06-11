@@ -2,7 +2,7 @@ import type { SupplyChainSignal } from './registry.js';
 
 export interface Vulnerability {
   name: string;
-  severity: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' | 'NONE';
+  severity: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' | 'UNKNOWN' | 'NONE';
   version: string;
   fixVersion?: string;
 }
@@ -26,7 +26,9 @@ export function makeDecision(vulnerabilities: Vulnerability[]): DecisionResult {
 
   if (severities.includes('CRITICAL') || severities.includes('HIGH')) {
     decision = 'deny';
-  } else if (severities.includes('MODERATE')) {
+  } else if (severities.includes('MODERATE') || severities.includes('UNKNOWN')) {
+    // UNKNOWN severity means the advisory exists but carries no score —
+    // never treat that as harmless; require user approval.
     decision = 'ask';
   }
 
@@ -34,6 +36,7 @@ export function makeDecision(vulnerabilities: Vulnerability[]): DecisionResult {
     const criticalCount = severities.filter(s => s === 'CRITICAL').length;
     const highCount = severities.filter(s => s === 'HIGH').length;
     const moderateCount = severities.filter(s => s === 'MODERATE').length;
+    const unknownCount = severities.filter(s => s === 'UNKNOWN').length;
 
     const parts = [];
     if (criticalCount > 0) {
@@ -44,6 +47,9 @@ export function makeDecision(vulnerabilities: Vulnerability[]): DecisionResult {
     }
     if (moderateCount > 0) {
       parts.push(`${moderateCount} MODERATE`);
+    }
+    if (unknownCount > 0) {
+      parts.push(`${unknownCount} UNKNOWN severity`);
     }
 
     const vuln = vulnerabilities[0];

@@ -32,8 +32,10 @@ function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['
     case 'HIGH': return 'HIGH';
     case 'MEDIUM': return 'MODERATE';
     case 'LOW': return 'LOW';
-    case 'UNKNOWN': return 'NONE';
-    default: return 'NONE';
+    // UNKNOWN must not collapse to NONE: advisories without a CVSS score
+    // (common for malware and fresh reports) would silently pass as "allow".
+    case 'UNKNOWN': return 'UNKNOWN';
+    default: return 'UNKNOWN';
   }
 }
 
