@@ -7,7 +7,7 @@ const LOW_DOWNLOAD_THRESHOLD = 100;
 const REGISTRY_TIMEOUT_MS = 3000;
 
 export interface SupplyChainSignal {
-  type: 'version-quarantine' | 'new-package' | 'low-downloads';
+  type: 'version-quarantine' | 'new-package' | 'low-downloads' | 'typosquat';
   severity: 'HIGH' | 'MEDIUM';
   detail: string;
   suggestion?: string;

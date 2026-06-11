@@ -35,6 +35,61 @@ function pypiResponse(version: string) {
   return { ok: true, status: 200, json: () => Promise.resolve({ info: { version } }) };
 }
 
+describe('checkPackageVulnerabilities — malware advisories (MAL-*)', () => {
+  function osvRawResponse(vulns: unknown[]) {
+    return { ok: true, status: 200, json: () => Promise.resolve({ vulns }) };
+  }
+
+  it('treats MAL-* advisories without any severity data as CRITICAL', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url === 'https://api.osv.dev/v1/query') {
+        // Real-world shape: MAL entries typically have no severity array
+        // and no database_specific.severity.
+        return Promise.resolve(
+          osvRawResponse([{ id: 'MAL-2026-1234', summary: 'Malicious code in evil-pkg (npm)' }])
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const result = await checkPackageVulnerabilities('evil-pkg', '1.0.0', 'npm');
+
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') return;
+    expect(result.vulnerabilities).toHaveLength(1);
+    expect(result.vulnerabilities[0].severity).toBe('CRITICAL');
+    expect(result.vulnerabilities[0].id).toBe('MAL-2026-1234');
+  });
+
+  it('treats advisories with a MAL-* alias as CRITICAL even when the id is a GHSA', async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(
+        osvRawResponse([
+          { id: 'GHSA-xxxx-yyyy-zzzz', aliases: ['MAL-2026-9999'], summary: 'malware' },
+        ])
+      )
+    );
+
+    const result = await checkPackageVulnerabilities('evil-pkg', '1.0.0', 'npm');
+
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') return;
+    expect(result.vulnerabilities[0].severity).toBe('CRITICAL');
+  });
+
+  it('keeps non-MAL advisories without severity data as UNKNOWN (not CRITICAL)', async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(osvRawResponse([{ id: 'GHSA-aaaa-bbbb-cccc', summary: 'unscored' }]))
+    );
+
+    const result = await checkPackageVulnerabilities('some-pkg', '1.0.0', 'npm');
+
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') return;
+    expect(result.vulnerabilities[0].severity).toBe('UNKNOWN');
+  });
+});
+
 describe('checkPackageVulnerabilities — version resolution', () => {
   it('resolves npm latest from registry when no version given, then queries OSV with that version', async () => {
     const calls: Array<{ url: string; body?: string }> = [];
