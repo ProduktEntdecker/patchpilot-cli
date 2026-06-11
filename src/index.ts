@@ -24,6 +24,7 @@ import { makeDecision, makeFullDecision, type Vulnerability } from './decision.j
 import { parseInstallCommand } from './parser.js';
 import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability, type CheckResult } from './osv.js';
 import { checkRegistryMetadata, type SupplyChainSignal } from './registry.js';
+import { checkTyposquat } from './typosquat.js';
 
 // Map OSV severity to decision engine severity
 function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['severity'] {
@@ -210,6 +211,12 @@ async function main() {
       if (result.status === 'success') {
         allSignals.push(...result.signals);
       }
+    }
+
+    // Typosquat detection runs offline against the embedded popular-package list
+    for (const pkg of checkablePackages) {
+      const squat = checkTyposquat(pkg.name, pkg.ecosystem);
+      if (squat) allSignals.push(squat);
     }
 
     // Make decision based on CVE vulnerabilities + supply chain signals
