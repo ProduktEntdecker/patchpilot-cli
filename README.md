@@ -31,6 +31,7 @@ After the [Axios supply chain attack](https://www.a16z.news/p/et-tu-agent-did-yo
 | **Version Quarantine** | Recently published versions — suggests previous stable release | < 72 hours old |
 | **New Package Detection** | Brand-new packages with no history | < 7 days old |
 | **Low Downloads** | Packages with no community adoption (npm only) | < 100/week |
+| **Typosquat Detection** | Names 1–2 edits away from popular packages (`lodahs` → `lodash`) | offline, curated list |
 
 All three would have caught `plain-crypto-js`, the malicious package used in the Axios attack.
 
@@ -118,13 +119,24 @@ NODE_ENV=production npm install evil-pkg
 
 | Source | Severity | Action |
 |--------|----------|--------|
+| **Malware** | Known malicious package (OSV `MAL-*`) | **Block** — requires manual approval |
 | **CVE** | CRITICAL or HIGH | **Block** — requires manual approval |
-| **CVE** | MODERATE | **Ask** — you decide |
+| **CVE** | MODERATE or unscored (UNKNOWN) | **Ask** — you decide |
 | **CVE** | LOW | **Allow** — with warning |
-| **Supply Chain** | Version < 72h / New package / Low downloads | **Ask** — you decide |
+| **Supply Chain** | Version < 72h / New package / Low downloads / Typosquat | **Ask** — you decide |
 | None found | — | **Allow** |
 
 Supply chain checks run in parallel with CVE checks (low added latency) and fail-open — if the registry is unreachable, installs proceed normally.
+
+## Accuracy
+
+When you reference a package without a version (e.g. `npx vite`, `npm install lodash`),
+PatchPilot resolves the current `latest` from the npm or PyPI registry before querying
+OSV. This avoids surfacing patched CVEs from older versions as if they affected the
+release you're about to install.
+
+If the registry lookup fails (timeout, 404, network error), PatchPilot falls back to
+querying OSV without a version — preserving fail-closed behavior for unknown packages.
 
 ## Limitations
 
@@ -132,6 +144,7 @@ Supply chain checks run in parallel with CVE checks (low added latency) and fail
 - **Private registries**: Only public npm and PyPI packages are checked.
 - **Offline**: Requires internet connection to query OSV API and package registries.
 - **Zero-day CVEs**: Supply chain heuristics catch suspicious metadata patterns, but cannot detect all novel attack vectors.
+- **Local `npx <tool>`**: PatchPilot treats `npx <tool>` as a potential install. If the tool is already installed in `./node_modules/.bin/`, npx runs the local copy and nothing is downloaded — but the OSV check still runs against the latest published version.
 
 ## Development
 
