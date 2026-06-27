@@ -55,3 +55,43 @@ describe('makeFullDecision', () => {
     expect(result.reason).toContain('Package created 2 days ago.');
   });
 });
+
+describe('makeFullDecision — signal combination rules', () => {
+  const newPackage = { type: 'new-package' as const, severity: 'HIGH' as const, detail: 'created 2 days ago' };
+  const installScript = { type: 'install-script' as const, severity: 'MEDIUM' as const, detail: 'runs postinstall' };
+  const lowDownloads = { type: 'low-downloads' as const, severity: 'MEDIUM' as const, detail: '3 weekly downloads' };
+  const quarantine = { type: 'version-quarantine' as const, severity: 'HIGH' as const, detail: 'published 1h ago' };
+  const typosquat = { type: 'typosquat' as const, severity: 'HIGH' as const, detail: '1 edit from lodash' };
+
+  it('denies new package + install script', () => {
+    const result = makeFullDecision([], [newPackage, installScript]);
+    expect(result.decision).toBe('deny');
+    expect(result.reason).toContain('high-risk supply chain profile');
+  });
+
+  it('denies new package + low downloads', () => {
+    expect(makeFullDecision([], [newPackage, lowDownloads]).decision).toBe('deny');
+  });
+
+  it('denies version quarantine + install script', () => {
+    const result = makeFullDecision([], [quarantine, installScript]);
+    expect(result.decision).toBe('deny');
+    expect(result.reason).toContain('compromised release');
+  });
+
+  it('denies typosquat + install script', () => {
+    expect(makeFullDecision([], [typosquat, installScript]).decision).toBe('deny');
+  });
+
+  it('only asks for a single new-package signal', () => {
+    expect(makeFullDecision([], [newPackage]).decision).toBe('ask');
+  });
+
+  it('only asks for a lone install-script signal', () => {
+    expect(makeFullDecision([], [installScript]).decision).toBe('ask');
+  });
+
+  it('still asks for new package + version quarantine (not a hard-block combo)', () => {
+    expect(makeFullDecision([], [newPackage, quarantine]).decision).toBe('ask');
+  });
+});

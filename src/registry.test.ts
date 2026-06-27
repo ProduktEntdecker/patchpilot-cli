@@ -16,6 +16,7 @@ function npmRegistryResponse(overrides: {
   previousVersion?: string;
   previousPublished?: string;
   maintainers?: number;
+  scripts?: Record<string, string>;
 } = {}) {
   const now = new Date();
   const created = overrides.created ?? new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
@@ -37,6 +38,10 @@ function npmRegistryResponse(overrides: {
     },
     'dist-tags': { latest: latestVersion },
     maintainers,
+    versions: {
+      [previousVersion]: { scripts: {} },
+      [latestVersion]: { scripts: overrides.scripts ?? {} },
+    },
   };
 }
 
@@ -358,6 +363,48 @@ describe('checkRegistryMetadata', () => {
 
       const result = await checkRegistryMetadata('any-pkg', undefined, 'pypi');
       expect(result).toEqual({ status: 'success', signals: [] });
+    });
+  });
+
+  describe('npm — install scripts', () => {
+    it('flags a package with a postinstall script', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('api.npmjs.org')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(npmDownloadsResponse(50000)) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(npmRegistryResponse({
+            latestVersion: '3.0.0',
+            scripts: { postinstall: 'node ./setup.js' },
+          })),
+        });
+      });
+
+      const result = await checkRegistryMetadata('some-native-pkg', '3.0.0', 'npm');
+      const signal = result.signals.find(s => s.type === 'install-script');
+      expect(signal).toBeDefined();
+      expect(signal!.severity).toBe('MEDIUM');
+      expect(signal!.detail).toContain('postinstall');
+      expect(signal!.suggestion).toContain('--ignore-scripts');
+    });
+
+    it('does not flag a package without lifecycle scripts', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('api.npmjs.org')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(npmDownloadsResponse(50000)) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(npmRegistryResponse({
+            latestVersion: '3.0.0',
+            scripts: { test: 'vitest', build: 'tsc' },
+          })),
+        });
+      });
+
+      const result = await checkRegistryMetadata('clean-pkg', '3.0.0', 'npm');
+      expect(result.signals.find(s => s.type === 'install-script')).toBeUndefined();
     });
   });
 });

@@ -7,11 +7,15 @@ const LOW_DOWNLOAD_THRESHOLD = 100;
 const REGISTRY_TIMEOUT_MS = 3000;
 
 export interface SupplyChainSignal {
-  type: 'version-quarantine' | 'new-package' | 'low-downloads' | 'typosquat';
+  type: 'version-quarantine' | 'new-package' | 'low-downloads' | 'typosquat' | 'install-script';
   severity: 'HIGH' | 'MEDIUM';
   detail: string;
   suggestion?: string;
 }
+
+// npm lifecycle scripts that execute automatically on install — the vector
+// most npm malware relies on to run its payload.
+const INSTALL_SCRIPT_HOOKS = ['preinstall', 'install', 'postinstall'] as const;
 
 export interface RegistryResult {
   status: 'success' | 'error';
@@ -71,6 +75,7 @@ interface NpmRegistryResponse {
   time?: Record<string, string>;
   maintainers?: Array<{ name?: string }>;
   'dist-tags'?: Record<string, string>;
+  versions?: Record<string, { scripts?: Record<string, string> }>;
 }
 
 interface NpmDownloadsResponse {
@@ -148,6 +153,21 @@ async function checkNpm(
         type: 'new-package',
         severity: 'HIGH',
         detail: `${name} was created ${formatAge(packageAge * 24)}. This package has no established history.`,
+      });
+    }
+  }
+
+  // H4: Install Scripts — the full registry doc carries each version's
+  // package.json scripts, so no extra request is needed.
+  if (resolvedVersion) {
+    const scripts = data.versions?.[resolvedVersion]?.scripts ?? {};
+    const present = INSTALL_SCRIPT_HOOKS.filter(hook => typeof scripts[hook] === 'string');
+    if (present.length > 0) {
+      signals.push({
+        type: 'install-script',
+        severity: 'MEDIUM',
+        detail: `${name}@${resolvedVersion} runs ${present.join('/')} script(s) on install — code executes automatically.`,
+        suggestion: 'Install with --ignore-scripts if you do not trust this package.',
       });
     }
   }
