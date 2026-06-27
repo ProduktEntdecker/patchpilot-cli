@@ -77,6 +77,22 @@ Or use npx (no global install):
 }
 ```
 
+## Configuration
+
+PatchPilot works with zero configuration. To tune it, create `~/.patchpilot.json` (override the path with `PATCHPILOT_CONFIG`):
+
+```json
+{
+  "allowlist": ["@types/*", "@myorg/*", "lodash"],
+  "cache": { "enabled": true, "ttlHours": 24 }
+}
+```
+
+- **`allowlist`** — packages you trust. Allowlisted packages skip the supply-chain heuristics (quarantine, new-package, low-downloads, typosquat, install-script) but are **still checked against OSV for known CVEs and malware** — an allowlist can never unblock a known-malicious package. Entries match an exact name or a trailing-`*` prefix (e.g. `@types/*`).
+- **`cache`** — clean results for an exact `name@version` are cached (default 24h) so repeat installs skip the network round-trip. Only `allow` results are cached; `deny`/`ask` are always re-evaluated, and unversioned (`latest`) references are never cached. The cache lives in `~/.cache/patchpilot/` (override with `PATCHPILOT_CACHE_DIR`). This also keeps installs flowing if the OSV API is briefly unreachable.
+
+A malformed config file is ignored with a warning rather than blocking installs.
+
 ## What It Detects
 
 ### Package Managers

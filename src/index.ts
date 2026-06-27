@@ -21,10 +21,21 @@
  */
 
 import { makeDecision, makeFullDecision, type Vulnerability } from './decision.js';
-import { parseInstallCommand } from './parser.js';
+import { parseInstallCommand, type ParsedPackage } from './parser.js';
 import { checkPackageVulnerabilities, type Vulnerability as OSVVulnerability, type CheckResult } from './osv.js';
 import { checkRegistryMetadata, type SupplyChainSignal } from './registry.js';
 import { checkTyposquat } from './typosquat.js';
+import { loadConfig, isAllowlisted } from './config.js';
+import { cacheKey, isCachedClean, cacheClean } from './cache.js';
+
+// Per-package check plan. Cached-clean packages skip every check; allowlisted
+// packages skip supply-chain checks but still get a CVE/malware check.
+interface PackagePlan {
+  pkg: ParsedPackage;
+  key?: string;
+  cachedClean: boolean;
+  allowlisted: boolean;
+}
 
 // Map OSV severity to decision engine severity
 function mapSeverity(osvSeverity: OSVVulnerability['severity']): Vulnerability['severity'] {
@@ -153,20 +164,32 @@ async function main() {
       return;
     }
 
-    // PARALLEL: Run OSV and registry checks concurrently
+    // Load user config (allowlist + cache); fail-safe to defaults on error.
+    const config = loadConfig();
+
+    // Build a per-package plan. A cached-clean result skips all checks; an
+    // allowlisted package skips supply-chain checks but is still CVE-checked.
+    const plans: PackagePlan[] = checkablePackages.map(pkg => {
+      const key = pkg.version ? cacheKey(pkg.ecosystem, pkg.name, pkg.version) : undefined;
+      const cachedClean = config.cache.enabled && key ? isCachedClean(key) : false;
+      return { pkg, key, cachedClean, allowlisted: isAllowlisted(pkg.name, config) };
+    });
+
+    const osvTargets = plans.filter(p => !p.cachedClean);
+    const registryTargets = plans.filter(p => !p.cachedClean && !p.allowlisted);
+
+    // PARALLEL: OSV (fail-closed) + registry metadata (fail-open)
     const [checkResults, registryResults] = await Promise.all([
-      // OSV vulnerability checks (fail-closed)
       Promise.all(
-        checkablePackages.map(pkg =>
-          checkPackageVulnerabilities(pkg.name, pkg.version, pkg.ecosystem)
-            .then(result => ({ pkg, result }))
+        osvTargets.map(plan =>
+          checkPackageVulnerabilities(plan.pkg.name, plan.pkg.version, plan.pkg.ecosystem)
+            .then(result => ({ plan, result }))
         )
       ),
-      // Registry metadata checks (fail-open)
       Promise.all(
-        checkablePackages.map(pkg =>
-          checkRegistryMetadata(pkg.name, pkg.version, pkg.ecosystem)
-            .then(result => ({ pkg, result }))
+        registryTargets.map(plan =>
+          checkRegistryMetadata(plan.pkg.name, plan.pkg.version, plan.pkg.ecosystem)
+            .then(result => ({ plan, result }))
         )
       ),
     ]);
@@ -174,18 +197,19 @@ async function main() {
     // FAIL CLOSED: If any OSV check failed, deny the install
     const errors: string[] = [];
     const allVulnerabilities: Vulnerability[] = [];
+    const osvCleanPlans = new Set<PackagePlan>();
 
-    for (const { pkg, result } of checkResults) {
+    for (const { plan, result } of checkResults) {
       if (result.status === 'error') {
-        errors.push(`${pkg.name}: ${result.error}`);
+        errors.push(`${plan.pkg.name}: ${result.error}`);
       } else {
-        // Convert OSV vulnerabilities to decision engine format
+        if (result.vulnerabilities.length === 0) osvCleanPlans.add(plan);
         // Use resolvedVersion (from registry lookup) when no version was specified,
         // so messages show the real version instead of misleading "latest".
-        const displayVersion = pkg.version || result.resolvedVersion || 'latest';
+        const displayVersion = plan.pkg.version || result.resolvedVersion || 'latest';
         for (const v of result.vulnerabilities) {
           allVulnerabilities.push({
-            name: pkg.name,
+            name: plan.pkg.name,
             version: displayVersion,
             severity: mapSeverity(v.severity),
           });
@@ -207,16 +231,30 @@ async function main() {
 
     // Collect supply chain signals (fail-open: errors silently ignored)
     const allSignals: SupplyChainSignal[] = [];
-    for (const { result } of registryResults) {
-      if (result.status === 'success') {
+    const plansWithSignals = new Set<PackagePlan>();
+    for (const { plan, result } of registryResults) {
+      if (result.status === 'success' && result.signals.length > 0) {
         allSignals.push(...result.signals);
+        plansWithSignals.add(plan);
       }
     }
 
     // Typosquat detection runs offline against the embedded popular-package list
-    for (const pkg of checkablePackages) {
-      const squat = checkTyposquat(pkg.name, pkg.ecosystem);
-      if (squat) allSignals.push(squat);
+    for (const plan of registryTargets) {
+      const squat = checkTyposquat(plan.pkg.name, plan.pkg.ecosystem);
+      if (squat) {
+        allSignals.push(squat);
+        plansWithSignals.add(plan);
+      }
+    }
+
+    // Cache packages that were fully checked (versioned, not allowlisted) and
+    // came back completely clean — only `allow` results are ever cached.
+    if (config.cache.enabled) {
+      const cleanKeys = registryTargets
+        .filter(p => p.key && osvCleanPlans.has(p) && !plansWithSignals.has(p))
+        .map(p => p.key as string);
+      cacheClean(cleanKeys, config.cache.ttlHours);
     }
 
     // Make decision based on CVE vulnerabilities + supply chain signals
