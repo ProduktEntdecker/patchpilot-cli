@@ -332,6 +332,14 @@ function detectInstallCommand(args: string[]): DetectResult | null {
   return null;
 }
 
+// PEP 503: PyPI treats runs of -, _, . as equivalent and is case-insensitive.
+// Normalize so OSV and registry lookups hit the canonical project name
+// (e.g. "Django" and "python_dateutil" → "django", "python-dateutil").
+function normalizePackageName(pkg: ParsedPackage): ParsedPackage {
+  if (pkg.ecosystem !== 'pypi') return pkg;
+  return { ...pkg, name: pkg.name.replace(/[-_.]+/g, '-').toLowerCase() };
+}
+
 export function parseInstallCommand(command: string): ParsedPackage[] | null {
   const allPackages: ParsedPackage[] = [];
 
@@ -346,7 +354,7 @@ export function parseInstallCommand(command: string): ParsedPackage[] | null {
       const install = detectInstallCommand(nested);
       if (install) {
         const packages = parsePackagesFromArgs(install.packageArgs, install.ecosystem);
-        allPackages.push(...packages);
+        allPackages.push(...packages.map(normalizePackageName));
       }
     }
   }

@@ -580,4 +580,33 @@ describe('parseInstallCommand', () => {
       ]);
     });
   });
+
+  describe('PyPI name normalization (PEP 503)', () => {
+    it('lowercases PyPI names', () => {
+      expect(parseInstallCommand('pip install Django')).toEqual([
+        { name: 'django', ecosystem: 'pypi' }
+      ]);
+    });
+
+    it('collapses underscores and dots to hyphens', () => {
+      expect(parseInstallCommand('pip install python_dateutil')).toEqual([
+        { name: 'python-dateutil', ecosystem: 'pypi' }
+      ]);
+      expect(parseInstallCommand('pip install zope.interface')).toEqual([
+        { name: 'zope-interface', ecosystem: 'pypi' }
+      ]);
+    });
+
+    it('preserves a pinned version while normalizing the name', () => {
+      expect(parseInstallCommand('pip install Flask_SQLAlchemy==2.5.1')).toEqual([
+        { name: 'flask-sqlalchemy', version: '2.5.1', ecosystem: 'pypi' }
+      ]);
+    });
+
+    it('does not alter npm package names (npm is case-sensitive)', () => {
+      expect(parseInstallCommand('npm install React_DOM')).toEqual([
+        { name: 'React_DOM', ecosystem: 'npm' }
+      ]);
+    });
+  });
 });

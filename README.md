@@ -32,10 +32,11 @@ After the [Axios supply chain attack](https://www.a16z.news/p/et-tu-agent-did-yo
 | **New Package Detection** | Brand-new packages with no history | < 7 days old |
 | **Low Downloads** | Packages with no community adoption (npm only) | < 100/week |
 | **Typosquat Detection** | Names 1–2 edits away from popular packages (`lodahs` → `lodash`) | offline, curated list |
+| **Install Scripts** | Packages that run `preinstall`/`install`/`postinstall` on install (npm only) | any lifecycle script |
 
-All three would have caught `plain-crypto-js`, the malicious package used in the Axios attack.
+These would have caught `plain-crypto-js`, the malicious package used in the Axios attack.
 
-Supply chain checks return `ask` (not `deny`) — you decide whether to proceed. CVE-based blocks remain automatic.
+A single supply chain signal returns `ask` — you decide whether to proceed. But high-risk **combinations** are blocked outright: a brand-new package that also runs install scripts (or has near-zero downloads), a just-published version with install scripts, or a likely typosquat with install scripts. CVE-based blocks remain automatic.
 
 ## Installation
 
@@ -123,7 +124,8 @@ NODE_ENV=production npm install evil-pkg
 | **CVE** | CRITICAL or HIGH | **Block** — requires manual approval |
 | **CVE** | MODERATE or unscored (UNKNOWN) | **Ask** — you decide |
 | **CVE** | LOW | **Allow** — with warning |
-| **Supply Chain** | Version < 72h / New package / Low downloads / Typosquat | **Ask** — you decide |
+| **Supply Chain** | High-risk combination (e.g. new package + install scripts) | **Block** — requires manual approval |
+| **Supply Chain** | Single signal: version < 72h / new package / low downloads / typosquat / install scripts | **Ask** — you decide |
 | None found | — | **Allow** |
 
 Supply chain checks run in parallel with CVE checks (low added latency) and fail-open — if the registry is unreachable, installs proceed normally.
