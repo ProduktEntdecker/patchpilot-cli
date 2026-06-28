@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-28
+
+### Added
+
+**Known-malware blocking (OSV `MAL-*`)**
+
+OSV advisories from the OpenSSF malicious-packages catalog (`MAL-*` ids)
+usually carry no CVSS score. Previously they collapsed through
+`UNKNOWN → NONE → allow`, so packages OSV explicitly flags as malware were
+installed with a reassuring message. They are now treated as `CRITICAL`
+(checked on the raw advisory id and aliases), and any unscored `UNKNOWN`
+advisory escalates to `ask` instead of silently passing.
+
+**Typosquat detection (offline)**
+
+Install names are compared against an embedded curated list of popular
+npm/PyPI packages using bounded Damerau-Levenshtein distance (transpositions
+like `lodahs` count as one edit). Near-misses raise a signal with a
+"Did you mean …?" hint. Runs entirely offline — no extra latency, no new
+failure mode.
+
+**Install-script detection (npm)**
+
+Packages that run `preinstall`/`install`/`postinstall` lifecycle scripts —
+the execution vector for most npm malware — now raise a supply chain signal.
+The full registry document already carries each version's scripts, so no
+extra request is made.
+
+**Signal combination rules**
+
+Individually weak supply chain signals are now hard-**blocked** when they
+form a fresh-malware profile: new package + install script, new package +
+low downloads, version quarantine + install script, or typosquat + install
+script. Single signals still return `ask`; CVE decisions still take priority.
+
+**Trusted-package allowlist + clean-result cache (`~/.patchpilot.json`)**
+
+- `allowlist` (exact name or `@scope/*` prefix) skips the supply-chain
+  heuristics but never the OSV CVE/malware check — an allowlist can never
+  unblock known-malicious code.
+- Clean `allow` results for an exact `name@version` are cached (24h default),
+  cutting latency on repeat installs and preventing fail-closed blocks during
+  brief OSV outages. Only `allow` is cached; `deny`/`ask` are always
+  re-evaluated and unversioned (`latest`) refs are never cached.
+- Config is zod-validated and fail-safe: a malformed file is ignored with a
+  warning rather than blocking installs.
+
+### Changed
+
+- PyPI package names are normalized per PEP 503 (lowercase, collapse runs of
+  `-`/`_`/`.`) before OSV and registry lookups, so `Django` and
+  `python_dateutil` resolve to their canonical project names. npm names are
+  left untouched.
+
+### Fixed
+
+- Packaging: the `files` allowlist now includes `dist/**` subdirectories, so
+  the embedded popular-packages data ships in the published tarball.
+
 ## [0.3.1] - 2026-04-19
 
 ### Fixed
