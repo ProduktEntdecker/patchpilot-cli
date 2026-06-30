@@ -1,0 +1,69 @@
+name: Claude Code Review
+
+# Weiche / Fallback-Reviewer
+# -------------------------
+# Claude springt als PR-Reviewer NUR dann ein, wenn CodeRabbit den Review nicht
+# starten kann (Rate-Limit / aufgebrauchte Credits). CodeRabbit postet in dem
+# Fall auf den PR einen Kommentar mit dem maschinenlesbaren Marker
+#   <!-- This is an auto-generated comment: rate limited by coderabbit.ai -->
+# Genau dieser Marker ist der Schalter: erscheint er, reviewt Claude.
+#
+# Läuft CodeRabbit normal, passiert hier NICHTS — kein Doppel-Review, kein
+# Subscription-Verbrauch. Manuell lässt sich Claude jederzeit über einen
+# `@claude`-Kommentar anstoßen (siehe claude.yml).
+#
+# WICHTIG: issue_comment-Workflows laufen immer mit der Datei-Version vom
+# Default-Branch. Die Weiche wirkt also erst NACH dem Merge — und dann für alle
+# künftigen PRs.
+
+on:
+  issue_comment:
+    types: [created]
+
+# Pro PR nur einen Fallback-Review gleichzeitig (z. B. bei Reopen).
+concurrency:
+  group: claude-review-pr-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Drei Bedingungen, alle nötig:
+    #  1. Kommentar hängt an einem PR (issue_comment feuert auch für Issues).
+    #  2. Autor ist der CodeRabbit-Bot (gegen Spoofing des Markers).
+    #  3. Body enthält den Rate-Limit-Marker — der steht ausschließlich im
+    #     Rate-Limit-Kommentar, nicht in normalen CodeRabbit-Reviews.
+    if: >
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'coderabbitai[bot]' &&
+      contains(github.event.comment.body, 'rate limited by coderabbit.ai')
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # write (nicht read): sonst läuft der Job grün durch, kann aber keine
+      # Review-/Inline-Kommentare auf den PR schreiben (stiller No-op).
+      pull-requests: write
+      issues: read
+      id-token: write
+      actions: read # Claude darf CI-Ergebnisse des PR lesen.
+
+    steps:
+      # Actions auf Commit-SHA gepinnt (Supply-Chain-Härtung).
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Auch bei 0 Findings ein sichtbares Summary posten (Beleg, dass der
+          # Reviewer lief).
+          use_sticky_comment: true
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          # issue_comment-Event: die PR-Nummer steht in issue.number
+          # (pull_request.number ist hier null).
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.issue.number }}'
