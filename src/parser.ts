@@ -221,6 +221,14 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
   }
 
+  // Update commands re-resolve semver ranges and can pull a freshly poisoned
+  // release — `npm update <pkg>` was ChainDrop's primary direct vector (Aug 2026).
+  // Vet named packages exactly like installs. Bare updates name no packages;
+  // that path is tracked in plans/transitive-dependency-coverage.md.
+  if (['npm', 'pnpm'].includes(cmd) && ['update', 'up', 'upgrade'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+  }
+
   // SECURITY FIX: npm link installs packages globally
   if (cmd === 'npm' && subcmd === 'link') {
     const linkArgs = unwrapped.slice(2);
@@ -234,6 +242,11 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
   }
 
+  // yarn upgrade (Classic) / yarn up (Berry) — vetted like installs
+  if (cmd === 'yarn' && ['upgrade', 'up'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+  }
+
   // yarn link
   if (cmd === 'yarn' && subcmd === 'link') {
     const linkArgs = unwrapped.slice(2);
@@ -242,7 +255,7 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     }
   }
 
-  if (cmd === 'bun' && ['add', 'install', 'i'].includes(subcmd)) {
+  if (cmd === 'bun' && ['add', 'install', 'i', 'update'].includes(subcmd)) {
     return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
   }
 
@@ -311,8 +324,8 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     return { ecosystem: 'pypi', packageArgs: unwrapped.slice(3) };
   }
 
-  // poetry add
-  if (cmd === 'poetry' && subcmd === 'add') {
+  // poetry add / poetry update — update re-resolves ranges like an install
+  if (cmd === 'poetry' && ['add', 'update'].includes(subcmd)) {
     return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2) };
   }
 
