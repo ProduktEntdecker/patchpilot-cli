@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual fallback: tag-push events are not reliably delivered for this repo
+  # (see #34) — run from the Actions tab or `gh workflow run release.yml
+  # --ref <tag>` with the tag checked out so npm publish sees the right version.
+  workflow_dispatch:
 
 jobs:
   release:
