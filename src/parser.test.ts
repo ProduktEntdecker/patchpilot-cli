@@ -112,6 +112,20 @@ describe('parseInstallCommand', () => {
         { name: 'keyv', ecosystem: 'npm' }
       ]);
     });
+
+    it('does not treat option values as package names (--omit dev)', () => {
+      expect(parseInstallCommand('npm update --omit dev')).toBeNull();
+    });
+
+    it('does not treat workspace paths as package names', () => {
+      expect(parseInstallCommand('npm update --workspace packages/a')).toBeNull();
+    });
+
+    it('separates real packages from option values', () => {
+      expect(parseInstallCommand('npm update lodash --workspace packages/a')).toEqual([
+        { name: 'lodash', ecosystem: 'npm' }
+      ]);
+    });
   });
 
   describe('versioned packages', () => {

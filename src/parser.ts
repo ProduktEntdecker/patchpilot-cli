@@ -156,10 +156,21 @@ function parseNestedCommand(args: string[], depth = 0): string[][] {
   return [args];
 }
 
+// Options that take a separate value argument — the value must not be
+// mistaken for a package name (e.g. `npm update --omit dev` must not check
+// a package called "dev", `--workspace packages/a` no package "packages/a").
+// `--flag=value` forms are already skipped by the leading-dash check.
+const VALUE_TAKING_FLAGS = new Set([
+  '--omit', '--include', '--workspace', '-w', '--filter', '--mode', '--only',
+  '--loglevel', '--registry', '--prefix', '--cwd', '--dir', '--modules-folder',
+]);
+
 function parsePackagesFromArgs(args: string[], ecosystem: ParsedPackage['ecosystem']): ParsedPackage[] {
   const packages: ParsedPackage[] = [];
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (VALUE_TAKING_FLAGS.has(arg)) { i++; continue; } // Skip flag + its value
     if (arg.startsWith('-')) continue; // Skip flags
     if (arg.startsWith('.') || arg.startsWith('/')) continue; // Skip local paths
 

@@ -47,6 +47,18 @@ runs; the audit catches transitive poison **after files land but typically
 before the developer executes the project** — and pinpoints exactly which
 transitive versions changed.
 
+### `npm ci` needs a different treatment
+
+`npm ci` produces **no lockfile diff** by definition — it installs exactly
+what the lockfile records, so a compromised version already recorded there
+never becomes a diff candidate and its install scripts run unchecked.
+Coverage for `npm ci` therefore cannot be diff-based: run a **pre-execution
+scan of the existing lockfile** instead (candidate set = all recorded
+entries; the v0.4.0 clean-result cache makes repeat scans cheap since only
+uncached `(name, version)` pairs hit the network). Until that scan ships,
+`npm ci` is explicitly **not covered** — the ChainDrop regression suite
+documents this limit as a test.
+
 ### Why not resolve the tree ourselves pre-execution?
 
 Considered and rejected for v0.5.x:
@@ -70,11 +82,14 @@ before the post-audit. Mitigation options, in preference order:
 1. Recommend `--ignore-scripts` as the default posture in agent sessions
    (PatchPilot can inject it or advise it; npm 11+ made this viable for most
    packages) and let the post-audit gate the first *execution* instead.
-2. For npm specifically: pre-run `npm install --dry-run
-   --package-lock-only` to compute the would-be lockfile without executing
-   scripts, then diff and gate **before** the real install. Slower (adds one
-   resolution pass) but closes the script-execution window entirely. Evaluate
-   as an opt-in `strict` mode.
+2. For npm specifically: pre-compute the would-be lockfile with
+   `npm install --package-lock-only --ignore-scripts` **in an isolated
+   working copy** (note: `--dry-run` cannot be used here — it suppresses the
+   lockfile write entirely, so there would be nothing to diff), then diff the
+   generated lockfile against the snapshot and gate **before** the real
+   install. Slower (adds one resolution pass) but closes the script-execution
+   window entirely. Evaluate as an opt-in `strict` mode; verify the flag
+   semantics against the npm versions we claim to support.
 
 ### Scope decisions for a first implementation
 
