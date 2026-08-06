@@ -34,6 +34,138 @@ describe('parseInstallCommand', () => {
     });
   });
 
+  // Update commands re-resolve semver ranges and can pull a freshly poisoned
+  // release — `npm update <pkg>` was ChainDrop's primary direct vector.
+  describe('update commands (v0.5.0)', () => {
+    it('parses npm update', () => {
+      expect(parseInstallCommand('npm update keyv')).toEqual([
+        { name: 'keyv', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses npm upgrade (alias)', () => {
+      expect(parseInstallCommand('npm upgrade lodash')).toEqual([
+        { name: 'lodash', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses npm up (shorthand)', () => {
+      expect(parseInstallCommand('npm up lodash')).toEqual([
+        { name: 'lodash', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses pnpm update', () => {
+      expect(parseInstallCommand('pnpm update express')).toEqual([
+        { name: 'express', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses pnpm up', () => {
+      expect(parseInstallCommand('pnpm up express')).toEqual([
+        { name: 'express', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses yarn upgrade (Classic)', () => {
+      expect(parseInstallCommand('yarn upgrade react')).toEqual([
+        { name: 'react', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses yarn up (Berry)', () => {
+      expect(parseInstallCommand('yarn up react')).toEqual([
+        { name: 'react', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses yarn up with version range', () => {
+      expect(parseInstallCommand('yarn up lodash@4.17.21')).toEqual([
+        { name: 'lodash', version: '4.17.21', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses bun update', () => {
+      expect(parseInstallCommand('bun update zod')).toEqual([
+        { name: 'zod', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('parses poetry update', () => {
+      expect(parseInstallCommand('poetry update requests')).toEqual([
+        { name: 'requests', ecosystem: 'pypi' }
+      ]);
+    });
+
+    it('returns null for bare npm update (no package named)', () => {
+      // Bare updates re-resolve the whole tree; tracked in
+      // plans/transitive-dependency-coverage.md, not parseable here.
+      expect(parseInstallCommand('npm update')).toBeNull();
+    });
+
+    it('returns null for bare yarn upgrade', () => {
+      expect(parseInstallCommand('yarn upgrade')).toBeNull();
+    });
+
+    it('vets update commands inside compound commands', () => {
+      expect(parseInstallCommand('cd /app && npm update keyv')).toEqual([
+        { name: 'keyv', ecosystem: 'npm' }
+      ]);
+    });
+
+    it('does not treat option values as package names (--omit dev)', () => {
+      expect(parseInstallCommand('npm update --omit dev')).toBeNull();
+    });
+
+    it('does not treat workspace paths as package names', () => {
+      expect(parseInstallCommand('npm update --workspace packages/a')).toBeNull();
+    });
+
+    it('separates real packages from option values', () => {
+      expect(parseInstallCommand('npm update lodash --workspace packages/a')).toEqual([
+        { name: 'lodash', ecosystem: 'npm' }
+      ]);
+    });
+
+    // Flag semantics are per package manager — a shared table would either
+    // skip real packages (unchecked installs) or flag option values.
+    describe('manager-specific flag semantics', () => {
+      it('pnpm --workspace is boolean: the package after it MUST be checked', () => {
+        expect(parseInstallCommand('pnpm update -r --workspace express')).toEqual([
+          { name: 'express', ecosystem: 'npm' }
+        ]);
+      });
+
+      it('pnpm --filter takes a value: filter target is not a package', () => {
+        expect(parseInstallCommand('pnpm update --filter @myorg/app express')).toEqual([
+          { name: 'express', ecosystem: 'npm' }
+        ]);
+      });
+
+      it('yarn --scope takes a value', () => {
+        expect(parseInstallCommand('yarn upgrade --scope @myorg')).toBeNull();
+      });
+
+      it('yarn --pattern takes a value', () => {
+        expect(parseInstallCommand('yarn upgrade --pattern gulp-')).toBeNull();
+      });
+
+      it('poetry --with takes a value: group name is not a package', () => {
+        expect(parseInstallCommand('poetry update --with dev')).toBeNull();
+      });
+
+      it('poetry --without value is skipped, real package is kept', () => {
+        expect(parseInstallCommand('poetry update --without dev requests')).toEqual([
+          { name: 'requests', ecosystem: 'pypi' }
+        ]);
+      });
+
+      it('pip -r requirements file is not a package name', () => {
+        expect(parseInstallCommand('pip install -r requirements.txt')).toBeNull();
+      });
+    });
+  });
+
   describe('versioned packages', () => {
     it('parses npm package@version', () => {
       expect(parseInstallCommand('npm install lodash@4.17.21')).toEqual([

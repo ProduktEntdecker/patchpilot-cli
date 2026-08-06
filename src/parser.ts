@@ -156,10 +156,54 @@ function parseNestedCommand(args: string[], depth = 0): string[][] {
   return [args];
 }
 
-function parsePackagesFromArgs(args: string[], ecosystem: ParsedPackage['ecosystem']): ParsedPackage[] {
-  const packages: ParsedPackage[] = [];
+// Package manager whose flag syntax applies to the argument list.
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'pip' | 'poetry' | 'brew';
 
-  for (const arg of args) {
+// Options that take a SEPARATE value argument, per package manager — the
+// value must not be mistaken for a package name (e.g. `npm update --omit dev`
+// must not check a package called "dev"). Flag semantics differ between
+// managers: npm's `--workspace` takes a value, pnpm's `--workspace` is a
+// boolean — a shared table would silently skip real packages. Keep these
+// lists conservative: a flag missing here means its value gets checked as a
+// package (a harmless false positive), while a boolean flag wrongly listed
+// here would skip a real package (an unchecked install).
+// `--flag=value` forms are already skipped by the leading-dash check.
+const VALUE_TAKING_FLAGS: Record<PackageManager, Set<string>> = {
+  npm: new Set([
+    '--omit', '--include', '--workspace', '-w', '--registry', '--loglevel',
+    '--prefix', '--tag', '--before', '--depth', '--script-shell',
+  ]),
+  pnpm: new Set([
+    // NOT --workspace: boolean for pnpm
+    '--filter', '-F', '--dir', '-C', '--registry', '--loglevel', '--reporter',
+    '--depth', '--store-dir', '--virtual-store-dir', '--lockfile-dir',
+  ]),
+  yarn: new Set([
+    '--scope', '--pattern', '--cwd', '--registry', '--modules-folder',
+    '--network-concurrency', '--mutex',
+  ]),
+  bun: new Set(['--cwd', '--registry', '--backend']),
+  pip: new Set([
+    '-i', '--index-url', '--extra-index-url', '--trusted-host', '-r',
+    '--requirement', '-c', '--constraint', '-t', '--target', '--platform',
+    '--python-version', '--proxy', '--retries', '--timeout', '--cache-dir',
+    '--root', '--prefix', '--src', '--log',
+  ]),
+  poetry: new Set(['--with', '--without', '--only', '-C', '--directory', '-P', '--project']),
+  brew: new Set([]),
+};
+
+function parsePackagesFromArgs(
+  args: string[],
+  ecosystem: ParsedPackage['ecosystem'],
+  manager: PackageManager
+): ParsedPackage[] {
+  const packages: ParsedPackage[] = [];
+  const valueTaking = VALUE_TAKING_FLAGS[manager];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (valueTaking.has(arg)) { i++; continue; } // Skip flag + its value
     if (arg.startsWith('-')) continue; // Skip flags
     if (arg.startsWith('.') || arg.startsWith('/')) continue; // Skip local paths
 
@@ -198,7 +242,11 @@ function parsePackagesFromArgs(args: string[], ecosystem: ParsedPackage['ecosyst
   return packages;
 }
 
-type DetectResult = { ecosystem: ParsedPackage['ecosystem']; packageArgs: string[] };
+type DetectResult = {
+  ecosystem: ParsedPackage['ecosystem'];
+  packageArgs: string[];
+  manager: PackageManager;
+};
 
 // Extract basename from potentially path-prefixed command
 function getBasename(cmd: string): string {
@@ -218,7 +266,15 @@ function detectInstallCommand(args: string[]): DetectResult | null {
 
   // P1-002: npm ecosystem - npm, npx, pnpm, yarn, bun
   if (['npm', 'pnpm'].includes(cmd) && ['install', 'i', 'add'].includes(subcmd)) {
-    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: cmd === 'pnpm' ? 'pnpm' : 'npm' };
+  }
+
+  // Update commands re-resolve semver ranges and can pull a freshly poisoned
+  // release — `npm update <pkg>` was ChainDrop's primary direct vector (Aug 2026).
+  // Vet named packages exactly like installs. Bare updates name no packages;
+  // that path is tracked in plans/transitive-dependency-coverage.md.
+  if (['npm', 'pnpm'].includes(cmd) && ['update', 'up', 'upgrade'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: cmd === 'pnpm' ? 'pnpm' : 'npm' };
   }
 
   // SECURITY FIX: npm link installs packages globally
@@ -226,31 +282,36 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     const linkArgs = unwrapped.slice(2);
     // npm link (no args) = link current directory, npm link <pkg> = install <pkg>
     if (linkArgs.length > 0) {
-      return { ecosystem: 'npm', packageArgs: linkArgs };
+      return { ecosystem: 'npm', packageArgs: linkArgs, manager: 'npm' };
     }
   }
 
   if (cmd === 'yarn' && ['add', 'install'].includes(subcmd)) {
-    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: 'yarn' };
+  }
+
+  // yarn upgrade (Classic) / yarn up (Berry) — vetted like installs
+  if (cmd === 'yarn' && ['upgrade', 'up'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: 'yarn' };
   }
 
   // yarn link
   if (cmd === 'yarn' && subcmd === 'link') {
     const linkArgs = unwrapped.slice(2);
     if (linkArgs.length > 0) {
-      return { ecosystem: 'npm', packageArgs: linkArgs };
+      return { ecosystem: 'npm', packageArgs: linkArgs, manager: 'yarn' };
     }
   }
 
-  if (cmd === 'bun' && ['add', 'install', 'i'].includes(subcmd)) {
-    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+  if (cmd === 'bun' && ['add', 'install', 'i', 'update'].includes(subcmd)) {
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: 'bun' };
   }
 
   // bun link
   if (cmd === 'bun' && subcmd === 'link') {
     const linkArgs = unwrapped.slice(2);
     if (linkArgs.length > 0) {
-      return { ecosystem: 'npm', packageArgs: linkArgs };
+      return { ecosystem: 'npm', packageArgs: linkArgs, manager: 'bun' };
     }
   }
 
@@ -292,41 +353,41 @@ function detectInstallCommand(args: string[]): DetectResult | null {
     }
 
     if (packagesToCheck.length > 0) {
-      return { ecosystem: 'npm', packageArgs: packagesToCheck };
+      return { ecosystem: 'npm', packageArgs: packagesToCheck, manager: 'npm' };
     }
   }
 
   // npm exec <package>
   if (cmd === 'npm' && subcmd === 'exec') {
-    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2) };
+    return { ecosystem: 'npm', packageArgs: unwrapped.slice(2), manager: 'npm' };
   }
 
   // P1-002: pip ecosystem - pip, pip3, pipx, uv, poetry
   if (['pip', 'pip3', 'pipx'].includes(cmd) && subcmd === 'install') {
-    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2) };
+    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2), manager: 'pip' };
   }
 
   // uv pip install
   if (cmd === 'uv' && subcmd === 'pip' && unwrapped[2] === 'install') {
-    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(3) };
+    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(3), manager: 'pip' };
   }
 
-  // poetry add
-  if (cmd === 'poetry' && subcmd === 'add') {
-    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2) };
+  // poetry add / poetry update — update re-resolves ranges like an install
+  if (cmd === 'poetry' && ['add', 'update'].includes(subcmd)) {
+    return { ecosystem: 'pypi', packageArgs: unwrapped.slice(2), manager: 'poetry' };
   }
 
   // python -m pip install (also handle full paths like /usr/bin/python3)
   const pythonBasename = getBasename(unwrapped[0]);
   if ((pythonBasename === 'python' || pythonBasename === 'python3') && subcmd === '-m') {
     if (unwrapped[2] === 'pip' && unwrapped[3] === 'install') {
-      return { ecosystem: 'pypi', packageArgs: unwrapped.slice(4) };
+      return { ecosystem: 'pypi', packageArgs: unwrapped.slice(4), manager: 'pip' };
     }
   }
 
   // homebrew - install, reinstall, upgrade
   if (cmd === 'brew' && ['install', 'reinstall', 'upgrade'].includes(subcmd)) {
-    return { ecosystem: 'homebrew', packageArgs: unwrapped.slice(2) };
+    return { ecosystem: 'homebrew', packageArgs: unwrapped.slice(2), manager: 'brew' };
   }
 
   return null;
@@ -353,7 +414,7 @@ export function parseInstallCommand(command: string): ParsedPackage[] | null {
     for (const nested of nestedCommands) {
       const install = detectInstallCommand(nested);
       if (install) {
-        const packages = parsePackagesFromArgs(install.packageArgs, install.ecosystem);
+        const packages = parsePackagesFromArgs(install.packageArgs, install.ecosystem, install.manager);
         allPackages.push(...packages.map(normalizePackageName));
       }
     }
