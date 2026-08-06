@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-06
+
+### Added
+
+**Update commands are vetted like installs**
+
+`npm`/`pnpm` `update|up|upgrade`, `yarn upgrade|up` (Classic and Berry),
+`bun update` and `poetry update` now go through the full OSV + registry-signal
+pipeline. Update commands re-resolve semver ranges and can pull a freshly
+poisoned release — `npm update <pkg>` was the ChainDrop worm's primary direct
+vector (August 2026) and previously bypassed the parser entirely. Bare updates
+(no package named) remain out of scope by construction; see the transitive
+plan below.
+
+**ChainDrop regression suite**
+
+`src/chaindrop.test.ts` permanently reconstructs npm's registry state from the
+ChainDrop attack window relative to the test clock (keyv@6.0.0 tagged latest,
+two hours old, declaring the worm's `preinstall` dropper, zero OSV data) and
+asserts that the unmodified pipeline hard-blocks the install, pinned-install
+and update vectors via the version-quarantine + install-script combination
+rule — inside the zero-day window, before any advisory exists. The suite also
+documents the honest limits (`npm ci`, bare installs) as tests.
+
+**Transitive-coverage design evaluation**
+
+`plans/transitive-dependency-coverage.md` evaluates how to close the
+transitive gap — ChainDrop's dominant infection path, which no command-line
+parser can see. Lockfile-diff checking is the selected approach; `npm ci`
+needs a pre-execution lockfile scan instead. Implementation targeted for the
+next minor release.
+
+### Fixed
+
+**Option values are no longer mistaken for package names**
+
+Values of value-taking flags (`npm update --omit dev`,
+`--workspace packages/a`, yarn `--scope`/`--pattern`, poetry
+`--with`/`--without`, pip `-r requirements.txt`) are no longer parsed as
+packages. The flag tables are per package manager — npm's `--workspace`
+takes a value while pnpm's is boolean — and deliberately conservative: a
+missing flag over-checks (harmless false positive), a wrong entry would skip
+a real package.
+
 ## [0.4.0] - 2026-06-28
 
 ### Added
