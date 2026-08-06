@@ -82,14 +82,21 @@ before the post-audit. Mitigation options, in preference order:
 1. Recommend `--ignore-scripts` as the default posture in agent sessions
    (PatchPilot can inject it or advise it; npm 11+ made this viable for most
    packages) and let the post-audit gate the first *execution* instead.
-2. For npm specifically: pre-compute the would-be lockfile with
-   `npm install --package-lock-only --ignore-scripts` **in an isolated
-   working copy** (note: `--dry-run` cannot be used here — it suppresses the
-   lockfile write entirely, so there would be nothing to diff), then diff the
-   generated lockfile against the snapshot and gate **before** the real
-   install. Slower (adds one resolution pass) but closes the script-execution
-   window entirely. Evaluate as an opt-in `strict` mode; verify the flag
-   semantics against the npm versions we claim to support.
+2. For npm specifically: pre-compute the would-be lockfile **in an isolated
+   working copy** by re-running the **original command** with
+   `--package-lock-only --ignore-scripts` appended — e.g. `npm update keyv`
+   becomes `npm update keyv --package-lock-only --ignore-scripts`. The
+   pre-pass must preserve the operation (install vs. update), the package
+   arguments and effective options like `--omit`/`--workspace`, because a
+   generic `npm install --package-lock-only` does **not** perform the same
+   resolution as the user's update command and could leave the lockfile
+   unchanged while the real command would move versions. (`--dry-run` cannot
+   be used at all — it suppresses the lockfile write, so there would be
+   nothing to diff.) Then diff the generated lockfile against the snapshot
+   and gate **before** the real install. Slower (adds one resolution pass)
+   but closes the script-execution window entirely. Evaluate as an opt-in
+   `strict` mode; verify the flag semantics against the npm versions we
+   claim to support.
 
 ### Scope decisions for a first implementation
 

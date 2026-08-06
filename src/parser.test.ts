@@ -126,6 +126,44 @@ describe('parseInstallCommand', () => {
         { name: 'lodash', ecosystem: 'npm' }
       ]);
     });
+
+    // Flag semantics are per package manager — a shared table would either
+    // skip real packages (unchecked installs) or flag option values.
+    describe('manager-specific flag semantics', () => {
+      it('pnpm --workspace is boolean: the package after it MUST be checked', () => {
+        expect(parseInstallCommand('pnpm update -r --workspace express')).toEqual([
+          { name: 'express', ecosystem: 'npm' }
+        ]);
+      });
+
+      it('pnpm --filter takes a value: filter target is not a package', () => {
+        expect(parseInstallCommand('pnpm update --filter @myorg/app express')).toEqual([
+          { name: 'express', ecosystem: 'npm' }
+        ]);
+      });
+
+      it('yarn --scope takes a value', () => {
+        expect(parseInstallCommand('yarn upgrade --scope @myorg')).toBeNull();
+      });
+
+      it('yarn --pattern takes a value', () => {
+        expect(parseInstallCommand('yarn upgrade --pattern gulp-')).toBeNull();
+      });
+
+      it('poetry --with takes a value: group name is not a package', () => {
+        expect(parseInstallCommand('poetry update --with dev')).toBeNull();
+      });
+
+      it('poetry --without value is skipped, real package is kept', () => {
+        expect(parseInstallCommand('poetry update --without dev requests')).toEqual([
+          { name: 'requests', ecosystem: 'pypi' }
+        ]);
+      });
+
+      it('pip -r requirements file is not a package name', () => {
+        expect(parseInstallCommand('pip install -r requirements.txt')).toBeNull();
+      });
+    });
   });
 
   describe('versioned packages', () => {
