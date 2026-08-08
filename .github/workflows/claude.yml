@@ -1,0 +1,61 @@
+name: Claude
+
+# @claude-Mention-Responder (Review-Fallback-Stufe "claude")
+# ----------------------------------------------------------
+# Reagiert auf @claude-Mentions in PR-/Issue-Kommentaren, Review-Kommentaren
+# und Issues. Das ist die Voraussetzung der Review-Fallback-Kette
+# (flos-claude-skills/references/review-fallbacks.yaml, Stufe "claude"):
+# Ohne diese Datei auf dem DEFAULT-Branch ist die Claude-App auf Mentions
+# taub — issue_comment-Events laden den Workflow immer von main, die Datei
+# wirkt also erst NACH dem Merge.
+#
+# Die claude-code-action prüft selbst, ob der mentionende Account
+# Schreibrechte im Repo hat — fremde Mentions starten keinen Lauf.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: >
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # write (nicht read): sonst läuft der Job grün durch, kann aber keine
+      # Review-/Inline-Kommentare auf den PR schreiben (stiller No-op).
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read # Claude darf CI-Ergebnisse des PR lesen.
+
+    steps:
+      # Actions auf Commit-SHA gepinnt (Supply-Chain-Härtung).
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          # Kein GITHUB_TOKEN in .git/config hinterlegen — die Action bringt
+          # ihre eigene Auth mit (Härtung, zizmor-Finding).
+          persist-credentials: false
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Workflow-Permissions allein reichen nicht: Auch der App-Token der
+          # Action braucht actions: read, damit Claude CI-Ergebnisse lesen kann.
+          additional_permissions: |
+            actions: read
