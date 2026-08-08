@@ -59,6 +59,18 @@ jobs:
           # ihre eigene Auth mit (Härtung, zizmor-Finding).
           persist-credentials: false
 
+      # Marketplace-Inhalt auf einen geprüften Commit gepinnt (Supply-Chain-
+      # Härtung): Die Action akzeptiert kein #ref/sha an der Marketplace-URL,
+      # wohl aber einen lokalen Pfad. SHA-Bump = bewusstes Plugin-Update.
+      - name: Checkout pinned Claude review marketplace
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: anthropics/claude-code
+          ref: 2bb60696142b493eafaeacfe00eac51d16c50c4f # main, 2026-08-08
+          path: .claude-code-marketplace
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1
@@ -74,8 +86,11 @@ jobs:
           # Auch bei 0 Findings ein sichtbares Summary posten (Beleg, dass der
           # Reviewer lief).
           use_sticky_comment: true
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugin_marketplaces: './.claude-code-marketplace'
           plugins: 'code-review@claude-code-plugins'
           # issue_comment-Event: die PR-Nummer steht in issue.number
           # (pull_request.number ist hier null).
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.issue.number }}'
+          # --comment ist zwingend: Ohne das Argument bricht das Plugin nach
+          # der Analyse ab und postet KEINE Kommentare (stiller No-op) —
+          # siehe plugins/code-review/commands/code-review.md, Step 7.
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.issue.number }} --comment'
