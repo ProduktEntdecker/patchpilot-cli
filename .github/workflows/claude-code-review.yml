@@ -20,13 +20,15 @@ on:
   issue_comment:
     types: [created]
 
-# Pro PR nur einen Fallback-Review gleichzeitig (z. B. bei Reopen).
-concurrency:
-  group: claude-review-pr-${{ github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   claude-review:
+    # Pro PR nur einen Fallback-Review gleichzeitig (z. B. bei Reopen).
+    # Job-Level statt Workflow-Level: Auf Workflow-Ebene würde jedes weitere
+    # issue_comment-Event derselben PR den laufenden Review canceln, obwohl
+    # der neue Lauf per if-Bedingung übersprungen wird.
+    concurrency:
+      group: claude-review-pr-${{ github.event.issue.number }}
+      cancel-in-progress: true
     # Drei Bedingungen, alle nötig:
     #  1. Kommentar hängt an einem PR (issue_comment feuert auch für Issues).
     #  2. Autor ist der CodeRabbit-Bot (gegen Spoofing des Markers).
@@ -53,16 +55,22 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
+          # Kein GITHUB_TOKEN in .git/config hinterlegen — die Action bringt
+          # ihre eigene Auth mit (Härtung, zizmor-Finding).
+          persist-credentials: false
 
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Die Action blockt Bot-Actors standardmäßig — unser Trigger IST aber
-          # der CodeRabbit-Bot (Rate-Limit-Marker-Kommentar). Nur diesen einen
-          # Bot zulassen, kein '*'.
-          allowed_bots: coderabbitai
+          # Der Trigger-Kommentar stammt vom CodeRabbit-Bot — Bot-Events
+          # ignoriert die Action ohne diese Freigabe stillschweigend.
+          allowed_bots: 'coderabbitai'
+          # Workflow-Permissions allein reichen nicht: Auch der App-Token der
+          # Action braucht actions: read, damit Claude CI-Ergebnisse lesen kann.
+          additional_permissions: |
+            actions: read
           # Auch bei 0 Findings ein sichtbares Summary posten (Beleg, dass der
           # Reviewer lief).
           use_sticky_comment: true
