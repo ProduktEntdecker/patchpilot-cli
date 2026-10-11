@@ -71,6 +71,20 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Die marketplace.json der Kopie heißt "claude-code-plugins". Claude Code
+      # reserviert diesen Namen für GitHub-Quellen der Org anthropics und lehnt
+      # jeden lokalen Pfad damit ab ("The name 'claude-code-plugins' is
+      # reserved…"). Daran scheitert jeder echte Fallback-Lauf, belegt im
+      # zeilengleichen patchpilot, hier bisher nur latent (#51). Inhalt und
+      # Pin bleiben unverändert, nur der Marketplace bekommt einen freien
+      # Namen. Der Slash-Command bleibt /code-review:code-review, denn
+      # der Namespace kommt vom Plugin, nicht vom Marketplace.
+      - name: Rename pinned marketplace (reserved name)
+        working-directory: .claude-code-marketplace
+        run: |
+          jq '.name = "pinned-plugins"' .claude-plugin/marketplace.json > marketplace.tmp
+          mv marketplace.tmp .claude-plugin/marketplace.json
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1
@@ -87,7 +101,7 @@ jobs:
           # Reviewer lief).
           use_sticky_comment: true
           plugin_marketplaces: './.claude-code-marketplace'
-          plugins: 'code-review@claude-code-plugins'
+          plugins: 'code-review@pinned-plugins'
           # issue_comment-Event: die PR-Nummer steht in issue.number
           # (pull_request.number ist hier null).
           # --comment ist zwingend: Ohne das Argument bricht das Plugin nach
